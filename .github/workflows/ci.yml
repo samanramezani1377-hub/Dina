@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     name: Backend tests
@@ -19,8 +23,8 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: pytest -q backend/tests tests/accounting
 
-  flutter:
-    name: Flutter analyze and test
+  flutter-lint-test-apk:
+    name: Flutter analyze, test and APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,9 +33,6 @@ jobs:
           flutter-version: '3.24.5'
           channel: stable
           cache: true
-      - name: Generate Android and Windows platform files
-        working-directory: app
-        run: flutter create . --platforms=android,windows --project-name dina_app
       - name: Get packages
         working-directory: app
         run: flutter pub get
@@ -44,7 +45,35 @@ jobs:
       - name: Build Android APK
         working-directory: app
         run: flutter build apk --debug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dina-app-debug-apk
+          path: app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+
+  flutter-windows:
+    name: Flutter Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+      - name: Get packages
+        working-directory: app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze
       - name: Build Windows
         working-directory: app
         run: flutter build windows --debug
-
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: dina-app-debug-windows
+          path: app/build/windows/x64/runner/Debug
+          if-no-files-found: error
