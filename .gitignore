@@ -8,8 +8,19 @@ build/
 *.iml
 .idea/
 .vscode/
-# Backend
+# Backend / secrets
+__pycache__/
+*.py[cod]
+.pytest_cache/
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+secrets/
 vendor/
 node_modules/
 coverage/

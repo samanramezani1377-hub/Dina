@@ -3,7 +3,8 @@
 - Flutter پایه Android/Windows
 - FastAPI با `/api/v1`
 - Organization و Membership/Role
-- password hashing/verification پایه
+- password hashing/verification با Argon2id (`argon2-cffi`) و ذخیره به صورت PHC string، به‌همراه مسیر `needs_rehash` برای ارتقای hashهای قدیمی
+- تنظیمات برنامه از environment (`backend/src/config.py`)؛ در محیط غیر تست، نبودن یا خالی بودن `SECRET_KEY` مانع راه‌اندازی سرویس می‌شود و هیچ secret پیش‌فرضی در کد وجود ندارد (`.env.example` فقط placeholder دارد)
 - tenant-scoped membership check
 - Double-entry validation و API آن
 - PostgreSQL schema پایه حسابداری
