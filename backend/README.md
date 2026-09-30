@@ -14,16 +14,27 @@ uvicorn src.main:app --app-dir backend
 
 متغیرهای محیطی از `.env.example` خوانده می‌شوند: `ENVIRONMENT`، `SECRET_KEY`، `JWT_ALGORITHM`،
 `JWT_EXPIRE_MINUTES` و `DATABASE_URL`. خارج از محیط `test`، نبودن یا خالی بودن `SECRET_KEY` باعث
-بالا نیامدن سرویس نمی‌شود (هیچ secret پیش‌فرضی در کد وجود ندارد).
+بالا نیامدن سرویس نمی‌شود (هیچ secret پیش‌فرضی در کد وجود ندارد). `SECRET_KEY` کوتاه‌تر از
+۳۲ کاراکتر یا همان مقدار placeholder موجود در `.env.example` هم پذیرفته نمی‌شود؛ برای تولید کلید
+واقعی:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
 
 ## رمز عبور
 
 `src/security.py` از Argon2id (`argon2-cffi`) استفاده می‌کند و hash را به صورت PHC string ذخیره
 می‌کند تا پارامترهای هزینه همراه hash جابه‌جا شوند. برای ارتقای hashهای قدیمی‌تر، پس از ورود
 موفق از `needs_rehash` استفاده کنید و hash جدید را ذخیره کنید. هیچ رمز یا tokenی لاگ نمی‌شود.
+حداقل طول رمز عبور ۱۲ کاراکتر است (`MIN_PASSWORD_LENGTH`) و `hash_password` کوتاه‌تر از آن را
+نمی‌پذیرد؛ `verify_password` در این حالت `False` برمی‌گرداند و exception پرتاب نمی‌کند.
 
 ## تست
 
 ```bash
-pytest -q backend/tests tests/accounting   # ENVIRONMENT=test
+pytest -q backend/tests tests/accounting
 ```
+
+ست تست خودش `ENVIRONMENT=test` را با fixture در `backend/tests/conftest.py` تنظیم می‌کند؛
+بنابراین نیازی به تنظیم دستی متغیر محیطی یا secret واقعی نیست.

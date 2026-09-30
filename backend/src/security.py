@@ -26,6 +26,12 @@ ARGON2_PARALLELISM = 4
 ARGON2_HASH_LEN = 32
 ARGON2_SALT_LEN = 16
 
+#: Shortest password accepted. Hashing a one-character password spends the full
+#: Argon2id cost for no added resistance: there is nothing to guess, and every
+#: short password is in any precomputed wordlist. Enforced here so every caller
+#: of :func:`hash_password` inherits one policy.
+MIN_PASSWORD_LENGTH = 12
+
 #: Passwords longer than this are rejected outright rather than hashed, so a
 #: multi-megabyte request body cannot be used to burn CPU/memory on a login.
 MAX_PASSWORD_LENGTH = 1024
@@ -51,7 +57,8 @@ def _validate_password(password: str) -> None:
     """Reject passwords that must never be hashed.
 
     Raises:
-        InvalidPassword: if ``password`` is empty, whitespace-only, longer than
+        InvalidPassword: if ``password`` is empty, whitespace-only, shorter than
+            :data:`MIN_PASSWORD_LENGTH`, longer than
             :data:`MAX_PASSWORD_LENGTH`, or contains a NUL character.
     """
     if not isinstance(password, str):
@@ -60,6 +67,10 @@ def _validate_password(password: str) -> None:
         raise InvalidPassword("password must not contain NUL characters")
     if not password.strip():
         raise InvalidPassword("password must not be empty")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise InvalidPassword(
+            f"password must be at least {MIN_PASSWORD_LENGTH} characters"
+        )
     if len(password) > MAX_PASSWORD_LENGTH:
         raise InvalidPassword(
             f"password must be at most {MAX_PASSWORD_LENGTH} characters"
@@ -73,7 +84,8 @@ def hash_password(password: str) -> str:
     calls with the same password produce different strings.
 
     Raises:
-        InvalidPassword: if the password is empty or too long to hash.
+        InvalidPassword: if the password violates the length policy or is
+            otherwise unacceptable; see :func:`_validate_password`.
     """
     _validate_password(password)
     return _password_hasher.hash(password)

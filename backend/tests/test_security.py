@@ -4,6 +4,7 @@ import pytest
 
 from src.security import (
     MAX_PASSWORD_LENGTH,
+    MIN_PASSWORD_LENGTH,
     InvalidPassword,
     hash_password,
     needs_rehash,
@@ -72,6 +73,24 @@ def test_hash_rejects_empty_password():
             hash_password(empty)
 
 
+def test_hash_rejects_password_below_the_minimum_length():
+    assert MIN_PASSWORD_LENGTH == 12
+    for short in ('a', 'short', 'x' * (MIN_PASSWORD_LENGTH - 1)):
+        with pytest.raises(InvalidPassword):
+            hash_password(short)
+
+
+def test_password_at_the_minimum_length_is_hashed():
+    password = 'z' * MIN_PASSWORD_LENGTH
+    encoded = hash_password(password)
+    assert verify_password(password, encoded) is True
+
+
+def test_verify_of_a_too_short_password_never_raises():
+    encoded = hash_password('a-real-password')
+    assert verify_password('a', encoded) is False
+
+
 def test_verify_of_empty_password_never_raises():
     encoded = hash_password('a-real-password')
     assert verify_password('', encoded) is False
@@ -96,12 +115,14 @@ def test_max_length_password_is_hashed():
 
 
 def test_password_with_nul_character_is_rejected():
+    # Long enough to clear the minimum length, so this exercises the NUL branch
+    # rather than the length branch.
     with pytest.raises(InvalidPassword):
-        hash_password('pass\x00word')
+        hash_password('pass\x00word-with-enough-length')
 
 
 def test_unicode_and_whitespace_passwords_round_trip():
-    for password in ('رمز عبور فارسی', 'pässwörd-🔐', ' leading and trailing '):
+    for password in ('رمز عبور فارسی', 'pässwörd-🔐-sicher', ' leading and trailing '):
         encoded = hash_password(password)
         assert verify_password(password, encoded)
 
@@ -134,11 +155,37 @@ def test_needs_rehash_returns_false_for_malformed_hash():
     assert needs_rehash('test-password', None) is False
 
 
-def test_module_does_not_expose_a_sha256_password_path():
-    import inspect
-
+def test_public_surface_has_no_password_path_beyond_argon2id():
+    # Behavioural guard on the module's public surface rather than a grep for
+    # the word "sha256" in the source: a text scan breaks on any future comment
+    # mentioning an old algorithm while a weak helper named anything else slips
+    # through. Any new password entry point has to be added here deliberately.
     from src import security
 
-    source = inspect.getsource(security)
-    assert 'sha256' not in source
-    assert not hasattr(security, 'sha256')
+    public_callables = {
+        name
+        for name, value in vars(security).items()
+        if not name.startswith('_')
+        and callable(value)
+        and getattr(value, '__module__', None) == security.__name__
+    }
+    assert public_callables == {
+        'InvalidPassword',
+        'hash_password',
+        'needs_rehash',
+        'verify_password',
+    }
+
+
+def test_only_argon2id_digests_verify():
+    # A stored digest from any other algorithm must never be accepted as a
+    # valid credential, whatever the caller passes in.
+    from src import security
+
+    assert security.hash_password('a-real-password').startswith('$argon2id$')
+    for other_digest in (
+        '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',  # sha256
+        '$2b$12$' + 'a' * 53,  # bcrypt-shaped
+        '$pbkdf2-sha256$i=1000$' + 'a' * 32,
+    ):
+        assert verify_password('a-real-password', other_digest) is False

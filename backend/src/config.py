@@ -2,9 +2,9 @@
 
 Every deployment-specific value (signing key, token lifetime, database URL)
 comes from the environment. There is deliberately no hard-coded ``SECRET_KEY``
-fallback: in any environment other than a test environment a missing or blank
-secret aborts startup, because a shipped default key means every installation
-signs tokens with the same key.
+fallback: in any environment other than a test environment a missing, blank,
+too-short or placeholder secret aborts startup, because a shipped default key
+means every installation signs tokens with the same key.
 
 See ``.env.example`` in the repository root for the variable names. Real
 secrets never belong in the repository; ``.gitignore`` excludes ``.env``,
@@ -16,12 +16,24 @@ from __future__ import annotations
 import secrets
 from functools import lru_cache
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 #: Environments in which a missing SECRET_KEY is tolerated. Tests get an
 #: ephemeral, per-process key instead; nothing else ever starts without one.
 TEST_ENVIRONMENTS = frozenset({"test", "testing"})
+
+#: Shortest signing key accepted. A one-byte key is enough to start a process
+#: and useless once an attacker guesses it, so refuse to boot on one. 32
+#: characters of ``secrets.token_urlsafe`` entropy is the NIST minimum for a
+#: symmetric key (SP 800-57 Part 1 Rev. 5, Table 2).
+MIN_SECRET_KEY_LENGTH = 32
+
+#: Values that ship in ``.env.example``. ``cp .env.example .env`` followed by
+#: a forgotten edit yields a production instance signing tokens with a key that
+#: is published in the repository, which is the same failure mode as shipping a
+#: hard-coded default. The app refuses to start on any of them.
+PLACEHOLDER_SECRET_KEYS = frozenset({"replace-me-with-a-long-random-value"})
 
 #: Symmetric HMAC algorithms only. "none" and asymmetric algorithms are
 #: rejected outright so a caller cannot configure algorithm confusion into the
@@ -60,8 +72,17 @@ class Settings(BaseSettings):
     )
 
     #: True when ``secret_key`` was generated in-process because none was
-    #: configured. Never true outside a test environment.
-    ephemeral_secret_key: bool = Field(default=False, exclude=True)
+    #: configured. Never true outside a test environment. A private attribute
+    #: rather than a field, so pydantic-settings cannot populate it from an
+    #: ``EPHEMERAL_SECRET_KEY`` environment variable: flipping it by hand is
+    #: exactly the "we have a key but pretend we do not" state that would let a
+    #: deployment start with a meaningless signing key.
+    _ephemeral_secret_key: bool = PrivateAttr(default=False)
+
+    @property
+    def ephemeral_secret_key(self) -> bool:
+        """Whether the signing key was generated in-process for a test run."""
+        return self._ephemeral_secret_key
 
     @property
     def is_test(self) -> bool:
@@ -98,9 +119,21 @@ class Settings(BaseSettings):
     def _check_secret_key(self) -> "Settings":
         configured = self.secret_key.get_secret_value().strip()
         if configured:
-            if self.ephemeral_secret_key:
+            if configured in PLACEHOLDER_SECRET_KEYS:
                 raise ConfigurationError(
-                    "SECRET_KEY was supplied while marked ephemeral"
+                    "SECRET_KEY is the placeholder from .env.example, which is "
+                    "published in the repository. Generate a real one with "
+                    "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"` "
+                    "and set it in the environment. Refusing to start with a "
+                    "publicly known signing key."
+                )
+            if len(configured) < MIN_SECRET_KEY_LENGTH:
+                raise ConfigurationError(
+                    f"SECRET_KEY must be at least {MIN_SECRET_KEY_LENGTH} "
+                    f"characters, got {len(configured)}. Generate one with "
+                    "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"` "
+                    "and set it in the environment. Refusing to start on a "
+                    "trivially guessable signing key."
                 )
             return self
         if not self.is_test:
@@ -113,7 +146,7 @@ class Settings(BaseSettings):
         # Test environments get a random key per process: deterministic tests
         # cannot rely on a shipped secret, and nothing is committed.
         self.secret_key = SecretStr(secrets.token_urlsafe(_EPHEMERAL_SECRET_BYTES))
-        self.ephemeral_secret_key = True
+        self._ephemeral_secret_key = True
         return self
 
     def require_secret_key(self) -> str:
