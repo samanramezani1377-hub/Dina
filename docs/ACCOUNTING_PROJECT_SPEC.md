@@ -1,272 +1,326 @@
-# Dina Accounting Platform — Project Specification
+# سند مشخصات پروژه حسابداری دینا
 
-## Product direction
+## جهت‌گیری محصول
 
-Dina is an online-first accounting platform for Android and Windows. Both clients use the same central server-side data source over HTTPS. The server is authoritative; offline-first synchronization is out of scope for the initial architecture.
+دینا یک پلتفرم حسابداری آنلاین برای اندروید و ویندوز است. هر دو کلاینت از طریق HTTPS به یک منبع مرکزی داده در سرور متصل می‌شوند. سرور مرجع اصلی داده‌هاست و در معماری اولیه، حالت آفلاین و همگام‌سازی آفلاین در نظر گرفته نمی‌شود.
 
-## Architecture
+## معماری
 
-- Flutter/Dart clients for Android and Windows
-- HTTPS REST API
-- Backend service with server-side business rules
-- PostgreSQL as the authoritative accounting database
-- Central authentication and organization/membership model
-- Role-based permissions
-- Subscription, licensing and payment services separated from accounting data
-- Automated backups, audit logging and monitoring
+- کلاینت‌های Android و Windows با Flutter و Dart
+- API مبتنی بر HTTPS و REST
+- Backend با منطق تجاری سمت سرور
+- PostgreSQL به‌عنوان پایگاه داده مرجع حسابداری
+- احراز هویت مرکزی و مدل سازمان/عضویت
+- دسترسی مبتنی بر نقش
+- جداسازی اشتراک، مجوز استفاده و پرداخت از داده‌های حسابداری
+- پشتیبان‌گیری خودکار، ثبت رویدادهای حسابرسی و پایش سامانه
 
-## Accounting foundation
+## پایه حسابداری
 
-Dina uses double-entry accounting. Every posted journal entry must satisfy `total_debits = total_credits`. Financial balances are derived from journal records rather than independently editable client values. Posted financial history should use reversal/correction workflows instead of destructive edits.
+دینا بر مبنای حسابداری دوطرفه ساخته می‌شود. هر سند حسابداری ثبت‌شده باید شرط زیر را داشته باشد:
 
-Core accounting concepts:
+`مجموع بدهکار = مجموع بستانکار`
 
-- Chart of accounts
-- Fiscal years/periods
-- Journal entries and journal lines
-- Opening balances
-- General ledger
-- Trial balance
-- Profit and loss
-- Balance sheet
-- Cash and bank accounts
-- Receivables and payables
+مانده‌های مالی باید از سوابق حسابداری محاسبه شوند و نباید به‌عنوان مقادیر مستقل و قابل ویرایش توسط کلاینت نگهداری شوند.
 
-## Business modules
+سوابق مالی ثبت‌شده نباید به‌صورت مخرب حذف یا ویرایش شوند؛ برای اصلاح آن‌ها باید از معکوس‌سازی (Reversal) یا اصلاح حسابداری استفاده شود.
 
-- Dashboard
-- Customers
-- Suppliers
-- Products and services
-- Sales invoices
-- Purchases
-- Payments
-- Inventory and warehouses
-- Cash and banks
-- Checks
-- Financial reports
-- Audit history
+### مفاهیم اصلی
 
-## Multi-tenant model
+- سرفصل حساب‌ها
+- سال و دوره مالی
+- اسناد حسابداری و ردیف‌های آن
+- مانده‌های افتتاحیه
+- دفتر کل
+- تراز آزمایشی
+- صورت سود و زیان
+- ترازنامه
+- حساب‌های نقدی و بانکی
+- حساب‌های دریافتنی و پرداختنی
 
-A user belongs to one or more organizations/businesses through memberships. Accounting and business records are organization-scoped. Tenant isolation must be enforced server-side on every relevant read and write.
+## ماژول‌های اصلی
 
-Suggested roles include Owner, Administrator, Accountant, Sales, Inventory and Read-only. Permissions must be enforced by the backend, not only by the clients.
+- داشبورد
+- مشتریان
+- تأمین‌کنندگان
+- کالاها و خدمات
+- فاکتورهای فروش
+- فاکتورهای خرید
+- پرداخت‌ها
+- انبار و انبارها
+- صندوق و بانک
+- چک‌ها
+- گزارش‌های مالی
+- تاریخچه و رویدادهای حسابرسی
 
-## SaaS and payments
+## مدل چندسازمانی
 
-Dina may be delivered as SaaS while the project owns or operates the infrastructure. Suggested billing concepts:
+هر کاربر می‌تواند از طریق عضویت به یک یا چند کسب‌وکار یا سازمان دسترسی داشته باشد.
 
-- Plans
-- Subscriptions
-- Entitlements
-- Licenses
-- Billing periods
-- Payments and payment attempts
-- Provider verification/webhooks
-- Expiration/grace-period rules
+تمام داده‌های حسابداری و عملیاتی باید به یک سازمان مشخص تعلق داشته باشند و جداسازی اطلاعات سازمان‌ها باید در سمت سرور برای تمام عملیات خواندن و نوشتن اجباری باشد.
 
-Payment confirmation must be idempotent so repeated callbacks cannot create duplicate payments or subscription periods. Expired subscriptions must be enforced by the backend; accounting data must not be deleted because of expiration.
+### نقش‌های پیشنهادی
 
-## API rules
+- مالک
+- مدیر
+- حسابدار
+- فروش
+- انبار
+- فقط مشاهده
 
-- Version the API, e.g. `/api/v1`
-- Validate every request server-side
-- Use stable machine-readable error codes
-- Use database transactions for financial mutations
-- Support pagination/filtering/sorting
-- Enforce authorization server-side
-- Use idempotency for retriable financial/payment operations
-- Never expose internal exceptions or secrets in production responses
+سطح دسترسی باید توسط Backend کنترل شود و صرفاً مخفی‌کردن امکانات در رابط کاربری کافی نیست.
 
-## Security
+## اشتراک و SaaS
 
-Required baseline controls:
+دینا می‌تواند به‌صورت SaaS ارائه شود، حتی اگر سرورها و زیرساخت توسط خود پروژه مدیریت شوند. SaaS بودن به نحوه ارائه سرویس مربوط است، نه مالکیت سخت‌افزار.
 
-- HTTPS only
-- Secure password hashing
-- Protected sessions/tokens
-- Server-side authorization
-- Tenant isolation
-- Input validation
-- Rate limiting for sensitive endpoints
-- Secret management outside source control
-- Audit logging
-- Dependency/security updates
-- Protected backups
+مفاهیم پیشنهادی:
 
-## Data and money
+- پلن‌ها
+- اشتراک‌ها
+- قابلیت‌های هر پلن (Entitlements)
+- مجوز استفاده (License)
+- دوره‌های صورتحساب
+- پرداخت‌ها و تلاش‌های پرداخت
+- تأیید پرداخت و Webhook
+- انقضا و دوره مهلت
 
-Monetary values must use exact decimal/numeric storage, never floating-point persistence. Currency, precision, rounding, tax and discount rules must be explicit.
+تأیید پرداخت باید Idempotent باشد؛ یعنی دریافت چندباره یک callback نباید پرداخت یا دوره اشتراک تکراری ایجاد کند.
 
-## Client architecture
+انقضای اشتراک باید در سمت سرور اعمال شود و نباید باعث حذف اطلاعات حسابداری شود.
 
-The Flutter application should separate presentation, application/state, API/repository and domain-facing concerns. Clients display and collect data; the server owns accounting rules, authorization, subscription enforcement and final validation.
+## قوانین API
 
-The Android and Windows clients should expose the same business capabilities, with platform-specific UX only where necessary for touch, keyboard/mouse, windows, printing or native integrations.
+- API نسخه‌بندی شود؛ برای مثال `/api/v1`
+- تمام درخواست‌ها در سمت سرور اعتبارسنجی شوند.
+- خطاها دارای کدهای پایدار و قابل پردازش باشند.
+- عملیات مالی داخل تراکنش پایگاه داده انجام شوند.
+- Pagination، فیلتر و مرتب‌سازی پشتیبانی شوند.
+- مجوز دسترسی در سمت سرور بررسی شود.
+- عملیات مالی و پرداختی قابل تکرار از Idempotency پشتیبانی کنند.
+- خطاهای داخلی و اطلاعات محرمانه در Production نمایش داده نشوند.
 
-## Reliability and concurrency
+## امنیت
 
-The backend must support concurrent use from multiple devices through transactions, appropriate locking/concurrency controls, unique constraints, idempotency and safe document/number generation.
+- استفاده از HTTPS
+- هش امن رمز عبور
+- محافظت از Session و Token
+- احراز مجوز در سمت سرور
+- جداسازی اطلاعات سازمان‌ها
+- اعتبارسنجی ورودی‌ها
+- Rate Limiting برای درخواست‌های حساس
+- نگهداری Secretها خارج از Source Code
+- ثبت رویدادهای امنیتی و حسابرسی
+- به‌روزرسانی وابستگی‌های امنیتی
+- محافظت از Backupها
 
-## Backup and recovery
+## داده‌های مالی
 
-- Automated PostgreSQL backups
-- Retention policy
-- Off-server backup where practical
-- Backup integrity verification
-- Documented restore process
-- Periodic recovery testing
+مقادیر پولی نباید با Floating Point در پایگاه داده ذخیره شوند. برای مقادیر مالی باید از Decimal/Numeric دقیق استفاده شود.
 
-## Testing
+موارد زیر باید مشخص باشند:
 
-CI and automated tests should cover:
+- واحد پول
+- دقت اعشار
+- قوانین گرد کردن
+- گرد کردن مالیات
+- گرد کردن تخفیف
+- قوانین نمایش اعداد
 
-- Backend/unit tests
-- API integration tests
-- Flutter formatting, analysis and tests
-- Android build
-- Windows build
-- Database migrations
-- Authentication and tenant isolation
-- Accounting invariants
-- Invoice/payment posting
-- Payment idempotency
-- Subscription lifecycle
-- End-to-end business workflows
+## معماری کلاینت
 
-At minimum, every posted journal entry must be tested for balanced debit/credit totals.
+ساختار Flutter باید مسئولیت‌های زیر را جدا کند:
 
-## Proposed repository structure
+- رابط کاربری (Presentation)
+- وضعیت و منطق کاربردی (Application/State)
+- API و Repository
+- لایه‌های دامنه
+
+کلاینت وظیفه نمایش اطلاعات و دریافت ورودی را دارد. سرور مسئول قوانین حسابداری، محاسبات مالی، مجوزها، اشتراک، اعتبارسنجی نهایی و یکپارچگی داده‌هاست.
+
+Android و Windows باید قابلیت‌های تجاری یکسانی داشته باشند، مگر در مواردی که تفاوت UX به‌دلیل Touch، Keyboard/Mouse، پنجره‌ها، چاپ یا قابلیت Native ضروری باشد.
+
+## همزمانی و قابلیت اطمینان
+
+Backend باید استفاده همزمان چند دستگاه را با موارد زیر مدیریت کند:
+
+- تراکنش‌های پایگاه داده
+- Lock مناسب
+- کنترل همزمانی
+- Constraintهای یکتا
+- Idempotency
+- تولید امن شماره اسناد
+- جلوگیری از ثبت تکراری
+
+## پشتیبان‌گیری و بازیابی
+
+- Backup خودکار PostgreSQL
+- سیاست نگهداری Backup
+- Backup خارج از سرور اصلی در صورت امکان
+- بررسی صحت Backup
+- مستندات Restore
+- تست دوره‌ای بازیابی
+
+Backupای که Restore آن آزمایش نشده باشد، نباید به‌عنوان Backup قابل بازیابی قطعی در نظر گرفته شود.
+
+## تست
+
+CI و تست‌های خودکار باید شامل موارد زیر باشند:
+
+- تست‌های Backend و Unit
+- تست‌های Integration برای API
+- Format و Static Analysis پروژه Flutter
+- تست‌های Flutter
+- Build اندروید
+- Build ویندوز
+- Migrationهای پایگاه داده
+- احراز هویت و جداسازی سازمان‌ها
+- قواعد حسابداری
+- ثبت فاکتور و پرداخت
+- Idempotency پرداخت
+- چرخه عمر اشتراک
+- تست‌های End-to-End
+
+برای هر سند حسابداری ثبت‌شده باید بررسی شود که:
+
+`مجموع بدهکار = مجموع بستانکار`
+
+## ساختار پیشنهادی ریپازیتوری
 
 ```text
 /
-├── app/              # Flutter Android/Windows application
-├── backend/          # API/backend
-├── database/         # migrations/seeds/schema support
-├── docs/             # specifications and architecture decisions
-├── infra/            # deployment/infrastructure
-└── tests/             # cross-system/E2E tests where appropriate
+├── app/              # برنامه Flutter برای Android و Windows
+├── backend/          # API و Backend
+├── database/         # Migration، Seed و ساختار پایگاه داده
+├── docs/             # مستندات و تصمیمات معماری
+├── infra/            # زیرساخت و تنظیمات استقرار
+└── tests/            # تست‌های یکپارچه و E2E
 ```
 
-The exact structure can change after the existing repository is inspected.
+ساختار نهایی می‌تواند پس از پیاده‌سازی Foundation پروژه تغییر کند.
 
-## Roadmap
+## نقشه راه
 
-### Phase 0 — Foundation
+### مرحله ۰ — زیرساخت اولیه
 
-- Repository structure
-- Flutter foundation
-- Backend foundation
-- Database migrations
+- ساختار ریپازیتوری
+- راه‌اندازی پایه Flutter
+- راه‌اندازی Backend
+- Migrationهای پایگاه داده
 - CI
-- Development/staging environments
+- محیط‌های Development و Staging
 
-### Phase 1 — Identity and tenancy
+### مرحله ۱ — هویت و سازمان‌ها
 
-- Registration/login
-- Organizations
-- Memberships
-- Roles and permissions
-- Sessions
+- ثبت‌نام و ورود
+- کاربران
+- سازمان‌ها و کسب‌وکارها
+- عضویت‌ها
+- نقش‌ها و دسترسی‌ها
+- مدیریت Session
 
-### Phase 2 — Accounting core
+### مرحله ۲ — هسته حسابداری
 
-- Chart of accounts
-- Fiscal periods
-- Journal entries/lines
-- Posting and reversal
-- General ledger
-- Trial balance
+- سرفصل حساب‌ها
+- دوره‌های مالی
+- اسناد و ردیف‌های حسابداری
+- قوانین ثبت و معکوس‌سازی
+- دفتر کل
+- تراز آزمایشی
 
-### Phase 3 — Flutter clients
+### مرحله ۳ — کلاینت‌های Flutter
 
-- Shared design system
+- Design System مشترک
 - Navigation
-- Authentication
-- API client
-- State management
-- Android/Windows layouts
+- صفحات احراز هویت
+- API Client
+- مدیریت State
+- Layoutهای Android و Windows
 
-### Phase 4 — Operations
+### مرحله ۴ — عملیات اصلی
 
-- Customers/suppliers
-- Products/services
-- Sales/purchases
-- Payments
-- Basic inventory
+- مشتریان و تأمین‌کنندگان
+- کالاها و خدمات
+- فروش و خرید
+- پرداخت‌ها
+- انبار پایه
 
-### Phase 5 — Financial operations
+### مرحله ۵ — عملیات مالی
 
-- Banks/cash
-- Checks
-- Reconciliation
-- Receivables/payables
-- Advanced reports
+- صندوق و بانک
+- چک‌ها
+- مغایرت‌گیری
+- دریافتنی‌ها و پرداختنی‌ها
+- گزارش‌های پیشرفته
 
-### Phase 6 — SaaS
+### مرحله ۶ — SaaS
 
-- Plans
-- Subscriptions
-- Licensing
-- Payment gateway abstraction
-- Verification/webhooks
-- Entitlement enforcement
+- پلن‌ها
+- اشتراک‌ها
+- مجوزها
+- لایه Abstraction برای درگاه پرداخت
+- تأیید پرداخت و Webhook
+- اعمال Entitlement
 
-### Phase 7 — Hardening and release
+### مرحله ۷ — سخت‌سازی و انتشار
 
-- Security review
-- Backup/restore test
-- Performance/concurrency testing
-- E2E tests
+- بررسی امنیت
+- تست Backup و Restore
+- تست Performance و Concurrency
+- تست‌های E2E
 - Monitoring
-- Android/Windows release pipelines
+- Pipeline انتشار Android و Windows
 
-## Architectural decisions
+## تصمیمات معماری فعلی
 
-| Decision | Direction |
+| تصمیم | وضعیت |
 |---|---|
-| Client platforms | Android + Windows |
-| Client framework | Flutter |
-| Primary data location | Central server |
-| Connectivity | Online required |
-| Offline-first | No |
-| Database | PostgreSQL |
+| پلتفرم‌های کلاینت | Android + Windows |
+| فریم‌ورک کلاینت | Flutter |
+| محل اصلی داده | سرور مرکزی |
+| نیاز به اینترنت | بله |
+| حالت Offline-first | خیر |
+| پایگاه داده | PostgreSQL |
 | API | HTTPS REST |
-| Accounting model | Double-entry |
-| Server authority | Yes |
-| Multi-device shared data | Yes |
-| Multi-user support | Yes |
-| SaaS subscriptions | Yes |
-| Payment abstraction | Yes |
-| Backups | Required |
-| Audit trail | Required |
+| مدل حسابداری | دوطرفه |
+| مرجع نهایی داده | سرور |
+| اشتراک داده بین دستگاه‌ها | بله |
+| چندکاربره | بله |
+| اشتراک SaaS | بله |
+| Abstraction پرداخت | بله |
+| Backup | الزامی |
+| Audit Trail | الزامی |
 
-## Decisions to finalize during implementation
+## تصمیماتی که در زمان پیاده‌سازی نهایی می‌شوند
 
-- Exact backend framework
-- Hosting/VPS architecture
-- Production PostgreSQL topology
-- Payment provider(s)
-- SMS/email providers
-- Subscription plans and limits
-- Regulatory/tax requirements
-- Invoice numbering and fiscal-year rules
-- Inventory valuation method
-- Printing/PDF requirements
-- Localization details
+- فریم‌ورک دقیق Backend
+- معماری Hosting/VPS
+- معماری PostgreSQL در Production
+- درگاه یا درگاه‌های پرداخت
+- سرویس SMS و Email
+- پلن‌ها و محدودیت‌های اشتراک
+- الزامات مالیاتی و مقررات حسابداری
+- قوانین شماره‌گذاری فاکتور
+- قوانین سال مالی
+- روش ارزش‌گذاری موجودی
+- الزامات چاپ و PDF
+- جزئیات بومی‌سازی
 
-## Engineering rules
+## قوانین مهندسی پروژه
 
-1. Never make the client authoritative for accounting calculations.
-2. Never persist monetary values as floating point.
-3. Use transactions for financial mutations.
-4. Enforce authorization on the server.
-5. Keep payment providers behind an abstraction.
-6. Preserve posted financial history through reversal/correction workflows.
-7. Do not introduce offline synchronization without an explicit architecture decision.
-8. Test the accounting effect of every financial workflow.
-9. Enforce organization isolation on every tenant-scoped query.
-10. Never commit production secrets.
-11. Document changes to the accounting model.
-12. Keep CI as a real validation gate.
+1. محاسبات و مانده‌های حسابداری نباید توسط کلاینت مرجع نهایی باشند.
+2. مقادیر پولی نباید به‌صورت Floating Point ذخیره شوند.
+3. عملیات مالی باید داخل Transaction انجام شوند.
+4. مجوزهای دسترسی باید در سرور بررسی شوند.
+5. درگاه‌های پرداخت باید پشت یک لایه Abstraction قرار بگیرند.
+6. سابقه مالی ثبت‌شده باید با روش‌های Reversal/Correction حفظ شود.
+7. Offline Sync بدون تصمیم معماری صریح اضافه نشود.
+8. اثر حسابداری هر فرآیند مالی باید تست خودکار داشته باشد.
+9. تمام Queryهای مربوط به داده‌های سازمانی باید جداسازی Tenant را رعایت کنند.
+10. Secretهای Production هرگز نباید وارد Git شوند.
+11. تغییرات مدل حسابداری باید مستند شوند.
+12. CI باید یک دروازه واقعی برای اعتبارسنجی تغییرات باقی بماند.
+
+## وضعیت سند
+
+این فایل سند پایه معماری و محصول Dina است و هر تصمیم مهم معماری یا تغییر در مدل حسابداری باید در همین مستند یا مستند تصمیم معماری مربوطه ثبت شود.
