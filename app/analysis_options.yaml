@@ -1,0 +1,5 @@
+# Lint rules for the Dina Flutter client.
+#
+# `flutter analyze` exits non-zero on any issue, including infos, so this set
+# has to stay at zero issues rather than merely zero errors.
+include: package:flutter_lints/flutter.yaml
