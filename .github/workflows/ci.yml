@@ -3,8 +3,10 @@ name: Dina CI
 on:
   push:
     branches: [main]
+  # No branch filter: convoy pull requests target the feature branch, not main.
+  # With `branches: [main]` they never triggered this workflow at all, so a red
+  # Flutter job could reach the feature branch unverified.
   pull_request:
-    branches: [main]
 
 jobs:
   backend:
@@ -19,8 +21,10 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: pytest -q backend/tests tests/accounting
 
-  flutter:
-    name: Flutter analyze and test
+  # Analyze, test and Android build all run on Linux. The Windows desktop build
+  # is a separate job because it can only be produced by a Windows runner.
+  flutter-lint-test-apk:
+    name: Flutter lint, test and Android APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,22 +33,93 @@ jobs:
           flutter-version: '3.24.5'
           channel: stable
           cache: true
-      - name: Generate Android and Windows platform files
+      # `flutter create` is used only to materialise the android/ scaffolding
+      # (gradle wrapper, manifest, MainActivity) that the build needs. It runs
+      # without --overwrite, so it only recreates *missing* files and never
+      # touches the committed lib/ or test/ sources. Regenerating the project in
+      # place is what produced the `MyApp` analyze failure in run 36775154759.
+      - name: Generate Android platform files
         working-directory: app
-        run: flutter create . --platforms=android,windows --project-name dina_app
+        run: flutter create . --platforms=android --project-name dina_app
       - name: Get packages
         working-directory: app
         run: flutter pub get
       - name: Analyze
         working-directory: app
-        run: flutter analyze
+        run: flutter analyze --fatal-infos --fatal-warnings
       - name: Test
         working-directory: app
         run: flutter test
       - name: Build Android APK
         working-directory: app
         run: flutter build apk --debug
+      # A build step that "succeeds" without producing a binary must not be
+      # reported as green.
+      - name: Verify APK artifact exists
+        working-directory: app
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          if [ ! -f "$apk" ]; then
+            echo "Expected APK was not produced at $apk" >&2
+            exit 1
+          fi
+          ls -l "$apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dina-app-debug-apk
+          path: app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+
+  flutter-windows:
+    name: Flutter Windows build
+    # Pinned to windows-2022 rather than windows-latest. windows-latest now
+    # resolves to a Windows Server 2025 image that ships Visual Studio 2026
+    # (18.x) only. Flutter 3.24.5 maps only VS major 17 to a CMake generator and
+    # falls back to "Visual Studio 16 2019" for everything else, so on that image
+    # the build dies with:
+    #   CMake Error at CMakeLists.txt:3 (project)
+    #     Generator: Visual Studio 16 2019
+    #     could not find any instance of Visual Studio.
+    # Flutter only learned to detect VS 2026 in 3.39. windows-2022 ships
+    # VS 2022 (major 17), which this Flutter version handles natively.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+      # Prints the toolchain the build is about to use, so a future toolchain
+      # change on the runner image is diagnosable from the log directly.
+      - name: Report detected Visual Studio installations
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          & $vswhere -format json -products * -all -utf8
+      # Same rationale as the Linux job: scaffolding only, no source rewriting.
+      - name: Generate Windows platform files
+        working-directory: app
+        run: flutter create . --platforms=windows --project-name dina_app
+      - name: Get packages
+        working-directory: app
+        run: flutter pub get
       - name: Build Windows
         working-directory: app
         run: flutter build windows --debug
-
+      - name: Verify Windows artifact exists
+        working-directory: app
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'build/windows/x64/runner/Debug/dina_app.exe'
+          if (-not (Test-Path $exe)) {
+            Write-Error "Expected Windows binary was not produced at $exe"
+            exit 1
+          }
+          Get-Item $exe | Format-List Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dina-app-windows-debug
+          path: app/build/windows/x64/runner/Debug/
+          if-no-files-found: error
