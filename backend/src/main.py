@@ -1,9 +1,17 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI,HTTPException
 from pydantic import BaseModel
 from decimal import Decimal
 from .accounting import validate_journal
+from .config import get_settings
 from .models import JournalLine
-app=FastAPI(title="Dina API",version="0.2.0")
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    # Loading settings here is the fail-fast gate: a missing or blank
+    # SECRET_KEY raises ConfigurationError and the process refuses to serve.
+    app.state.settings=get_settings()
+    yield
+app=FastAPI(title="Dina API",version="0.2.0",lifespan=lifespan)
 class JournalLineInput(BaseModel):
     account_id:int
     debit:Decimal=Decimal("0")

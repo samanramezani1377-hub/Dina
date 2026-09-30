@@ -19,7 +19,12 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install --upgrade pip
       - run: pip install -r backend/requirements.txt
+      # Tests run as the "test" environment: only then is a missing SECRET_KEY
+      # tolerated (an ephemeral per-process key is generated). No real secret is
+      # ever set or committed.
       - run: pytest -q backend/tests tests/accounting
+        env:
+          ENVIRONMENT: test
 
   # Analyze, test and Android build all run on Linux. The Windows desktop build
   # is a separate job because it can only be produced by a Windows runner.
