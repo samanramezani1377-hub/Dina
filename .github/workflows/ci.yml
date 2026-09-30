@@ -44,6 +44,16 @@ jobs:
       - name: Generate Android platform files
         working-directory: app
         run: flutter create . --platforms=android --project-name dina_app
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('app/android/**/gradle-wrapper.properties', 'app/android/**/build.gradle*', 'app/android/**/settings.gradle*', 'app/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
       - name: Get packages
         working-directory: app
         run: flutter pub get
