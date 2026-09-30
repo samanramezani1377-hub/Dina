@@ -18,13 +18,19 @@ class JournalInput(BaseModel):
 def health(): return {"status":"ok","service":"dina-api"}
 @app.post("/api/v1/accounting/journals/validate")
 def validate(payload:JournalInput,request:Request=None):
+    # TODO(auth): this route has no authentication yet, so the tenant cannot be
+    # resolved server-side. The body's organization_id is a client claim and
+    # MUST NOT be trusted: it is recorded under a non-tenant key only. When
+    # JWT/RBAC lands, resolve the organization from the membership dependency
+    # and ignore the body field entirely.
+    def audit_details(outcome:str,**extra):
+        return {"document_no":payload.document_no,"outcome":outcome,"line_count":len(payload.lines),"claimed_organization_id":payload.organization_id,**extra}
     try: validate_journal([JournalLine(**x.model_dump()) for x in payload.lines])
     except ValueError as e:
         code=str(e)
-        # Rejected journal attempts are audited against the tenant they claimed.
-        record(action=AuditAction.JOURNAL_CREATED,entity="journal_entry",entity_id=None,organization_id=payload.organization_id,metadata={"document_no":payload.document_no,"outcome":"rejected","reason_code":code,"line_count":len(payload.lines)},correlation_id=_correlation_id(request),ip_address=_ip_address(request))
+        record(action=AuditAction.JOURNAL_CREATED,entity="journal_entry",entity_id=None,organization_id=None,metadata=audit_details("rejected",reason_code=code),correlation_id=_correlation_id(request),ip_address=_ip_address(request))
         raise HTTPException(422,detail=code) from e
-    record(action=AuditAction.JOURNAL_CREATED,entity="journal_entry",entity_id=None,organization_id=payload.organization_id,metadata={"document_no":payload.document_no,"outcome":"validated","line_count":len(payload.lines)},correlation_id=_correlation_id(request),ip_address=_ip_address(request))
+    record(action=AuditAction.JOURNAL_CREATED,entity="journal_entry",entity_id=None,organization_id=None,metadata=audit_details("validated"),correlation_id=_correlation_id(request),ip_address=_ip_address(request))
     return {"valid":True,"organization_id":payload.organization_id,"document_no":payload.document_no,"description":payload.description,"lines":len(payload.lines)}
 
 def _correlation_id(request:Request|None)->str|None:

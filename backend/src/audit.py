@@ -41,6 +41,17 @@ MAX_DEPTH = 12
 #: Maximum length of a serialised metadata payload, keeps rows bounded.
 MAX_METADATA_CHARS = 8000
 
+#: Individual string values are capped before serialisation. Truncating the
+#: serialised JSON instead would produce a payload that can never be parsed
+#: back, so the bound has to be applied to the tree.
+MAX_METADATA_STRING_CHARS = 512
+
+#: Maximum number of keys kept in one metadata mapping.
+MAX_METADATA_KEYS = 64
+
+#: Maximum number of items kept in one metadata list.
+MAX_METADATA_LIST_ITEMS = 64
+
 
 class AuditAction:
     """Stable action names. These are part of the public contract."""
@@ -198,17 +209,56 @@ def _redact_string(value: str) -> str:
     return result
 
 
-def _scan_and_blank(text: str) -> str | None:
-    """Return the sanitised text, or ``None`` if it still leaks a secret.
+def _bound_string(value: str) -> str:
+    if len(value) <= MAX_METADATA_STRING_CHARS:
+        return value
+    return value[:MAX_METADATA_STRING_CHARS] + "…[truncated]"
 
-    Backstop pass. Anything that survives this check is discarded wholesale:
-    a half-redacted secret is worse than a missing audit detail.
+
+def _bound(value: Any, *, _depth: int = 0) -> Any:
+    """Cap the redacted tree so its serialised form stays bounded.
+
+    Bounds are applied to the tree, never to the serialised JSON: a truncated
+    JSON document cannot be parsed back, which would throw the whole payload
+    away.
     """
-    if contains_secret_value(text):
-        return None
-    if len(text) > MAX_METADATA_CHARS:
-        text = text[:MAX_METADATA_CHARS] + REDACTED
-    return text
+    if _depth > MAX_DEPTH:
+        return REDACTED
+    if isinstance(value, str):
+        return _bound_string(value)
+    if isinstance(value, Mapping):
+        items = list(value.items())
+        kept = {
+            str(key): _bound(item, _depth=_depth + 1) for key, item in items[:MAX_METADATA_KEYS]
+        }
+        if len(items) > MAX_METADATA_KEYS:
+            kept["metadata_truncated"] = True
+        return kept
+    if isinstance(value, (list, tuple)):
+        items = list(value)[:MAX_METADATA_LIST_ITEMS]
+        bounded = [_bound(item, _depth=_depth + 1) for item in items]
+        if len(value) > MAX_METADATA_LIST_ITEMS:
+            bounded.append("…[truncated]")
+        return bounded
+    return value
+
+
+def _serialise_bounded(bounded: Mapping[str, Any]) -> str:
+    """Serialise a bounded payload, shrinking it until it fits.
+
+    Individual values are already capped by :func:`_bound`, so this only has
+    to cope with a payload that is large in aggregate. Keys are dropped from the
+    end until the serialised form is under :data:`MAX_METADATA_CHARS`; the
+    surviving form always parses back.
+    """
+    payload = dict(bounded)
+    dropped = False
+    while payload and len(json.dumps(payload, default=str, sort_keys=True)) > MAX_METADATA_CHARS:
+        payload.popitem()
+        dropped = True
+    if dropped:
+        payload["metadata_truncated"] = True
+    return json.dumps(payload, default=str, sort_keys=True)
 
 
 # --------------------------------------------------------------------------
@@ -263,14 +313,26 @@ class InMemoryAuditStore(AuditStore):
     """In-memory store used by unit tests and by the validate-only API.
 
     It mirrors the SQL schema (including tenant filtering) but holds nothing
-    across process restarts.
+    across process restarts. It is **dev-only and non-durable**: it is not the
+    runtime store for a production deployment. See :data:`DEFAULT_STORE`.
+
+    ``max_rows`` bounds the process-global list. Existing rows are never
+    dropped — that would be a delete path — so once the bound is reached every
+    further append raises and :func:`record` logs the failure. That is the
+    honest failure mode for a store that is not durable anyway.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_rows: int | None = None) -> None:
         self._rows: list[AuditEntry] = []
         self._next_id = 1
+        self._max_rows = max_rows
 
     def append(self, entry: AuditEntry) -> AuditEntry:
+        if self._max_rows is not None and len(self._rows) >= self._max_rows:
+            raise RuntimeError(
+                f"in-memory audit store is full ({self._max_rows} rows); "
+                "wire PostgresAuditStore for a durable trail"
+            )
         stored = AuditEntry(
             id=self._next_id,
             organization_id=entry.organization_id,
@@ -296,11 +358,6 @@ class InMemoryAuditStore(AuditStore):
     @property
     def rows(self) -> list[AuditEntry]:
         return list(self._rows)
-
-    def clear(self) -> None:
-        """Drop every row. In-memory only, for test isolation."""
-        self._rows.clear()
-        self._next_id = 1
 
 
 class PostgresAuditStore(AuditStore):
@@ -408,7 +465,21 @@ class PostgresAuditStore(AuditStore):
 # Recording
 # --------------------------------------------------------------------------
 
-DEFAULT_STORE = InMemoryAuditStore()
+#: Row ceiling for the process-global in-memory default store. The default
+#: store is a dev-only convenience: it is bounded, it is lost on restart, and
+#: :class:`PostgresAuditStore` is what a real deployment must wire in.
+DEFAULT_STORE_MAX_ROWS = 10_000
+
+#: Dev-only, non-durable default. Bounded by :data:`DEFAULT_STORE_MAX_ROWS` and
+#: lost on restart. Production must call :func:`set_default_store` with a
+#: :class:`PostgresAuditStore` once ``DATABASE_URL`` exists.
+DEFAULT_STORE = InMemoryAuditStore(max_rows=DEFAULT_STORE_MAX_ROWS)
+
+
+def set_default_store(store: AuditStore) -> None:
+    """Replace the process-global default store (e.g. with the Postgres one)."""
+    global DEFAULT_STORE
+    DEFAULT_STORE = store
 
 
 def _coerce_entity_id(entity_id: Any) -> str | None:
@@ -422,14 +493,16 @@ def _normalise_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
         return {}
     redacted = redact(dict(metadata))
     serialised = json.dumps(redacted, default=str, sort_keys=True)
-    safe = _scan_and_blank(serialised)
-    if safe is None:
+    if contains_secret_value(serialised):
         # Backstop tripped: keep the entry, drop every detail.
         logger.warning("audit metadata dropped by redaction backstop")
         return {"metadata_dropped": True, "redaction_applied": True}
+    bounded = _bound(redacted)
+    if not isinstance(bounded, Mapping):
+        return {"value": bounded}
     try:
-        restored = json.loads(safe)
-    except json.JSONDecodeError:  # pragma: no cover - defensive
+        restored = json.loads(_serialise_bounded(bounded))
+    except json.JSONDecodeError:
         return {"metadata_unavailable": True}
     return restored if isinstance(restored, dict) else {"value": restored}
 
@@ -496,22 +569,35 @@ def query_for_organization(
     store: AuditStore,
     organization_id: int,
     *,
+    caller_organization_id: int,
     role: str | None = None,
     user_id: int | None = None,
     action: str | None = None,
 ) -> list[AuditEntry]:
     """Return the audit rows of one organization for an authorized reader.
 
-    The organization id comes from the caller's authorization context, never
-    from a user supplied filter, and only the roles in
-    :data:`AUDIT_READ_ROLES` may read the trail. Any other caller raises
-    :class:`AuditError`, so a cross-tenant read is impossible rather than
-    merely empty.
+    Two independent conditions must both hold, and a role string alone is not
+    one of them:
+
+    * ``caller_organization_id`` is the tenant the caller is *authorized* for,
+      resolved from their membership by the caller of this function — never
+      from a request body, path or query parameter. It is a required keyword
+      argument precisely so it cannot be forgotten.
+    * ``role`` is one of :data:`AUDIT_READ_ROLES`.
+
+    If either fails, or the requested ``organization_id`` is not the tenant the
+    caller is authorized for, :class:`AuditError` is raised. A cross-tenant
+    read is therefore impossible rather than merely empty: rows are never
+    fetched, so nothing leaks even if the caller's own filter is right.
     """
     if organization_id is None:
         raise AuditError("organization_id is required")
+    if caller_organization_id is None:
+        raise AuditError("caller_organization_id is required")
     if role not in AUDIT_READ_ROLES:
         raise AuditError("role may not read the audit trail")
+    if organization_id != caller_organization_id:
+        raise AuditError("caller is not authorized for this organization")
     rows = store.list_for_organization(organization_id)
     if action is not None:
         rows = [r for r in rows if r.action == action]
@@ -608,7 +694,16 @@ def record_login_failed(
     )
 
 
-def record_logout(*, user_id: int, organization_id: int | None = None, **kwargs) -> AuditEntry | None:
+def record_logout(
+    *,
+    user_id: int,
+    organization_id: int | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
+) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
     return record(
         action=AuditAction.LOGOUT,
         **_common(
@@ -616,17 +711,25 @@ def record_logout(*, user_id: int, organization_id: int | None = None, **kwargs)
             entity_id=user_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata=None,
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
 
-
 def record_organization_created(
-    *, organization_id: int, user_id: int, name: str | None = None, **kwargs
+    *,
+    organization_id: int,
+    user_id: int,
+    name: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"name": name} if name else {})
     return record(
         action=AuditAction.ORGANIZATION_CREATED,
         **_common(
@@ -634,17 +737,26 @@ def record_organization_created(
             entity_id=organization_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"name": name} if name else None,
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
 
-
 def record_membership_added(
-    *, organization_id: int, user_id: int, member_user_id: int, role: str, **kwargs
+    *,
+    organization_id: int,
+    user_id: int,
+    member_user_id: int,
+    role: str,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"member_user_id": member_user_id, "role": role})
     return record(
         action=AuditAction.MEMBERSHIP_ADDED,
         **_common(
@@ -652,17 +764,26 @@ def record_membership_added(
             entity_id=f"{organization_id}:{member_user_id}",
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"member_user_id": member_user_id, "role": role},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
 
-
 def record_membership_removed(
-    *, organization_id: int, user_id: int, member_user_id: int, role: str | None = None, **kwargs
+    *,
+    organization_id: int,
+    user_id: int,
+    member_user_id: int,
+    role: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"member_user_id": member_user_id, "role": role})
     return record(
         action=AuditAction.MEMBERSHIP_REMOVED,
         **_common(
@@ -670,13 +791,12 @@ def record_membership_removed(
             entity_id=f"{organization_id}:{member_user_id}",
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"member_user_id": member_user_id, "role": role},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
-
 
 def record_account_created(
     *,
@@ -685,8 +805,13 @@ def record_account_created(
     account_id: int,
     code: str,
     account_type: str,
-    **kwargs,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"code": code, "account_type": account_type})
     return record(
         action=AuditAction.ACCOUNT_CREATED,
         **_common(
@@ -694,13 +819,12 @@ def record_account_created(
             entity_id=account_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"code": code, "account_type": account_type},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
-
 
 def record_journal_created(
     *,
@@ -709,8 +833,13 @@ def record_journal_created(
     journal_id: int,
     document_no: str,
     line_count: int,
-    **kwargs,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"document_no": document_no, "line_count": line_count})
     return record(
         action=AuditAction.JOURNAL_CREATED,
         **_common(
@@ -718,13 +847,12 @@ def record_journal_created(
             entity_id=journal_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"document_no": document_no, "line_count": line_count},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
-
 
 def record_journal_posted(
     *,
@@ -732,8 +860,13 @@ def record_journal_posted(
     user_id: int,
     journal_id: int,
     document_no: str,
-    **kwargs,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"document_no": document_no})
     return record(
         action=AuditAction.JOURNAL_POSTED,
         **_common(
@@ -741,13 +874,12 @@ def record_journal_posted(
             entity_id=journal_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"document_no": document_no},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
-
 
 def record_journal_reversed(
     *,
@@ -756,8 +888,13 @@ def record_journal_reversed(
     journal_id: int,
     reversal_id: int,
     document_no: str,
-    **kwargs,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"document_no": document_no, "reversal_id": reversal_id})
     return record(
         action=AuditAction.JOURNAL_REVERSED,
         **_common(
@@ -765,13 +902,12 @@ def record_journal_reversed(
             entity_id=journal_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"document_no": document_no, "reversal_id": reversal_id},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
-
 
 def record_journal_corrected(
     *,
@@ -780,8 +916,13 @@ def record_journal_corrected(
     journal_id: int,
     correction_id: int,
     document_no: str,
-    **kwargs,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"document_no": document_no, "correction_id": correction_id})
     return record(
         action=AuditAction.JOURNAL_CORRECTED,
         **_common(
@@ -789,13 +930,12 @@ def record_journal_corrected(
             entity_id=journal_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"document_no": document_no, "correction_id": correction_id},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
-
 
 def record_payment_recorded(
     *,
@@ -804,8 +944,13 @@ def record_payment_recorded(
     payment_id: int,
     amount: str,
     currency: str | None = None,
-    **kwargs,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"amount": amount, "currency": currency})
     return record(
         action=AuditAction.PAYMENT_RECORDED,
         **_common(
@@ -813,13 +958,12 @@ def record_payment_recorded(
             entity_id=payment_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"amount": amount, "currency": currency},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
-
 
 def record_subscription_changed(
     *,
@@ -828,8 +972,13 @@ def record_subscription_changed(
     subscription_id: int,
     change: str,
     status: str | None = None,
-    **kwargs,
+    metadata: Mapping[str, Any] | None = None,
+    store: AuditStore | None = None,
+    correlation_id: str | None = None,
+    ip_address: str | None = None,
 ) -> AuditEntry | None:
+    details: dict[str, Any] = dict(metadata or {})
+    details.update({"change": change, "status": status})
     return record(
         action=AuditAction.SUBSCRIPTION_CHANGED,
         **_common(
@@ -837,10 +986,10 @@ def record_subscription_changed(
             entity_id=subscription_id,
             user_id=user_id,
             organization_id=organization_id,
-            metadata={"change": change, "status": status},
-            store=kwargs.get("store"),
-            correlation_id=kwargs.get("correlation_id"),
-            ip_address=kwargs.get("ip_address"),
+            metadata=details or None,
+            store=store,
+            correlation_id=correlation_id,
+            ip_address=ip_address,
         ),
     )
 
