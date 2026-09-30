@@ -1,7 +1,22 @@
-from fastapi import FastAPI
-
-app = FastAPI(title="Dina API", version="0.1.0")
-
+from fastapi import FastAPI,HTTPException
+from pydantic import BaseModel
+from decimal import Decimal
+from .accounting import validate_journal
+from .models import JournalLine
+app=FastAPI(title="Dina API",version="0.2.0")
+class JournalLineInput(BaseModel):
+    account_id:int
+    debit:Decimal=Decimal("0")
+    credit:Decimal=Decimal("0")
+class JournalInput(BaseModel):
+    organization_id:int
+    document_no:str
+    description:str
+    lines:list[JournalLineInput]
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "dina-api"}
+def health(): return {"status":"ok","service":"dina-api"}
+@app.post("/api/v1/accounting/journals/validate")
+def validate(payload:JournalInput):
+    try: validate_journal([JournalLine(**x.model_dump()) for x in payload.lines])
+    except ValueError as e: raise HTTPException(422,detail=str(e)) from e
+    return {"valid":True,"organization_id":payload.organization_id,"document_no":payload.document_no,"description":payload.description,"lines":len(payload.lines)}
