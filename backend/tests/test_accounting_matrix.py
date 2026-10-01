@@ -54,6 +54,7 @@ from ledger_fixtures import (
     post_entry,
     post_other_org_entry,
 )
+from src.accounting import validate_journal
 from src.accounting_store import AccountingError, AccountingStore
 from src.models import DRAFT, POSTED, REVERSED
 
@@ -211,6 +212,22 @@ def test_an_empty_journal_is_refused_with_journal_must_have_lines(accounting_sto
 
     assert refused.value.code == "journal_must_have_lines"
     assert accounting_store.list_entries(ORGANIZATION_ID) == []
+
+
+def test_the_journal_validator_itself_refuses_an_empty_journal():
+    """Case: the empty-journal rule holds at the validator, not only at the store.
+
+    The rule is enforced twice on purpose, so this test is what pins the copy
+    that :meth:`AccountingStore.add_entry` calls into. Without it, deleting the
+    validator's own empty-list check would leave the store's guard as the only
+    thing standing between a caller and an entry with no lines -- and a future
+    second caller of :func:`src.accounting.validate_journal` would have nothing
+    left.
+    """
+    with pytest.raises(ValueError) as refused:
+        validate_journal([])
+
+    assert str(refused.value) == "journal_must_have_lines"
 
 
 # -- posting: who may post, and whose rows they may touch --------------------
@@ -604,6 +621,35 @@ def test_the_ledger_running_balance_is_correct_across_multiple_entries(
     assert report["closing_balance"] == report["movements"][-1]["running_balance"]
 
 
+def test_the_stores_ledger_read_is_scoped_to_one_organization(accounting_store):
+    """Case: the tenant-scoped read returns one organization's entries and no others.
+
+    The reports call this, so it is the read the isolation guarantee is actually
+    made of. Asserting it directly, rather than only through the rendered report,
+    is deliberate: a report can come out clean by accident -- account ids are
+    globally unique, so a leak into a report is not guaranteed to change the
+    figures. Here the leak is the thing being tested, and org 2's entry is
+    unmistakable in org 1's list.
+    """
+    cash = account_id(accounting_store, "1100")
+    revenue = account_id(accounting_store, "4000")
+    post_entry(
+        accounting_store,
+        "JV-ORG-ONE",
+        DAY_ONE,
+        [line(cash, debit="500.00"), line(revenue, credit="500.00")],
+    )
+    post_other_org_entry(accounting_store, "JV-ORG-TWO", DAY_ONE, "7000.00")
+
+    assert [entry.document_no for entry in accounting_store.ledger_entries(ORGANIZATION_ID)] == [
+        "JV-ORG-ONE"
+    ]
+    assert [
+        entry.document_no
+        for entry in accounting_store.ledger_entries(OTHER_ORGANIZATION_ID)
+    ] == ["JV-ORG-TWO"]
+
+
 def test_an_entry_in_one_organization_never_reaches_another_tenants_reports(
     accounting_store, ledger_client: TestClient, ledger_url: str, trial_balance_url: str
 ):
@@ -611,6 +657,14 @@ def test_an_entry_in_one_organization_never_reaches_another_tenants_reports(
 
     Org 2 is made a real tenant with real postings first, so a clean report for
     org 1 cannot be explained by org 2 simply having nothing in it.
+
+    This is the end-to-end half of the isolation guarantee; the store-scoped read
+    it depends on is pinned by ``test_the_stores_ledger_read_is_scoped_to_one_
+    organization``. Between them there is defence in depth: account ids are
+    globally unique and ``add_entry`` refuses a line naming another tenant's
+    account, so this report would stay clean even without the ledger read's own
+    organization filter. That is a reason to be glad there are two guards, not a
+    reason to test the same line twice.
     """
     cash = account_id(accounting_store, "1100")
     revenue = account_id(accounting_store, "4000")
