@@ -773,7 +773,7 @@ def test_a_non_member_cannot_read_another_tenants_trial_balance(
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "not_a_member"
+    assert response.json()["error"]["code"] == "not_a_member"
 
 
 def test_an_unknown_organization_is_reported_as_not_found(trial_balance_client):
@@ -783,7 +783,7 @@ def test_an_unknown_organization_is_reported_as_not_found(trial_balance_client):
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "organization_not_found"
+    assert response.json()["error"]["code"] == "organization_not_found"
 
 
 # --------------------------------------------------------------------------
@@ -800,7 +800,7 @@ def test_a_viewer_may_not_read_the_trial_balance(
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "permission_denied"
+    assert response.json()["error"]["code"] == "permission_denied"
 
 
 @pytest.mark.parametrize("role", ["accountant", "manager", "owner"])
@@ -830,7 +830,7 @@ def test_roles_below_accounting_may_not_read_the_trial_balance(
         test_client.__exit__(None, None, None)
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "permission_denied"
+    assert response.json()["error"]["code"] == "permission_denied"
 
 
 def test_an_unauthenticated_request_is_refused(
@@ -840,7 +840,7 @@ def test_an_unauthenticated_request_is_refused(
     response = trial_balance_client.get(trial_balance_url)
 
     assert response.status_code == 401
-    assert response.json()["detail"] == "not_authenticated"
+    assert response.json()["error"]["code"] == "not_authenticated"
 
 
 def test_a_non_numeric_identity_is_refused(
@@ -852,7 +852,7 @@ def test_a_non_numeric_identity_is_refused(
     )
 
     assert response.status_code == 401
-    assert response.json()["detail"] == "not_authenticated"
+    assert response.json()["error"]["code"] == "not_authenticated"
 
 
 def test_a_user_with_no_memberships_is_refused(
@@ -864,4 +864,4 @@ def test_a_user_with_no_memberships_is_refused(
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "not_a_member"
+    assert response.json()["error"]["code"] == "not_a_member"

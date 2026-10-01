@@ -20,20 +20,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import Header, HTTPException
+from fastapi import Header
 
+from .errors import ApiError, ErrorCode
 from .store import InMemoryStore
 
 USER_ID_HEADER = "X-User-Id"
 
 
-class AuthenticationError(RuntimeError):
-    """Raised when the request carries no usable caller identity."""
+class AuthenticationError(ApiError):
+    """Raised when the request carries no usable caller identity, or a caller
+    identity that has no standing in the requested organization.
 
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
+    Carries the same codes and the same envelope as every other failure; the
+    distinct type exists so the authentication paths can be read — and tested —
+    on their own.
+    """
 
 
 @dataclass(frozen=True)
@@ -56,22 +58,24 @@ def current_user_id(
 ) -> int:
     """Return the caller's user id, or raise a 401.
 
-    Raises :class:`HTTPException` rather than :class:`AuthenticationError`
-    because this runs as a FastAPI dependency, where an escaping exception
-    becomes an opaque 500 with a traceback in the response. Converting here
-    means a missing header is a 401 with its stable code, which is what a
-    client needs in order to tell "log in again" apart from "server broke".
+    Raises :class:`AuthenticationError` with ``not_authenticated`` rather than
+    letting the exception escape as an opaque 500: a missing header has to be a
+    401 carrying its stable code, which is what a client needs in order to tell
+    "log in again" apart from "server broke".
     """
     if x_user_id is None or not x_user_id.strip():
-        raise HTTPException(
-            401,
-            detail="not_authenticated",
+        raise AuthenticationError(
+            ErrorCode.NOT_AUTHENTICATED,
+            f"the {USER_ID_HEADER} header is missing or blank",
             headers={"WWW-Authenticate": USER_ID_HEADER},
         )
     try:
         return int(x_user_id.strip())
     except ValueError as exc:
-        raise HTTPException(401, detail="not_authenticated") from exc
+        raise AuthenticationError(
+            ErrorCode.NOT_AUTHENTICATED,
+            f"the {USER_ID_HEADER} header must be a user id",
+        ) from exc
 
 
 def resolve_caller(
@@ -86,13 +90,15 @@ def resolve_caller(
     """
     if organization_id not in memberships.organizations:
         raise AuthenticationError(
-            "organization_not_found",
+            ErrorCode.ORGANIZATION_NOT_FOUND,
             f"organization {organization_id} does not exist",
+            {"organization_id": organization_id},
         )
     role = memberships.user_role(user_id, organization_id)
     if role is None:
         raise AuthenticationError(
-            "not_a_member",
+            ErrorCode.NOT_A_MEMBER,
             f"user {user_id} is not a member of organization {organization_id}",
+            {"user_id": user_id, "organization_id": organization_id},
         )
     return Caller(user_id=user_id, organization_id=organization_id, role=role)
