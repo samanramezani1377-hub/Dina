@@ -30,7 +30,12 @@ jobs:
       # With the fixture, booting the app in a test genuinely exercises the
       # fail-fast startup gate in src/main.py. No real secret is ever set or
       # committed.
-      - run: pytest -q backend/tests tests/accounting
+      # backend/tests is the whole backend suite, including the accounting
+      # domain matrix in test_accounting_matrix.py. The top-level tests/
+      # directory held exactly one file, which asserted that two hardcoded lists
+      # of Decimal summed equally -- it exercised sum(), not this application --
+      # and was removed rather than left running alongside the real tests.
+      - run: pytest -q backend/tests
 
   # Analyze, test and Android build all run on Linux. The Windows desktop build
   # is a separate job because it can only be produced by a Windows runner.
