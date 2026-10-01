@@ -28,6 +28,7 @@ from .config import get_settings
 from .errors import ApiError, register_error_handlers
 from .ledger_api import router as ledger_router
 from .models import JournalLine
+from .postgres_store import PostgresStore
 from .store import InMemoryStore
 
 
@@ -36,13 +37,18 @@ async def lifespan(app: FastAPI):
     # Loading settings here is the fail-fast gate: a missing or blank
     # SECRET_KEY raises ConfigurationError and the process refuses to serve.
     app.state.settings = get_settings()
-    # TODO(persistence): replace all three stores with the PostgreSQL
-    # repositories once the migrations in database/migrations are wired up. They
-    # are created here rather than at import time so a test can swap an isolated
-    # instance in before any request is served.
-    app.state.memberships = InMemoryStore({}, [])
-    app.state.accounting_store = AccountingStore()
-    app.state.users = UserDirectory()
+    # Tests deliberately keep isolated in-memory state. Every other environment
+    # uses the PostgreSQL repositories, so a process restart cannot erase users,
+    # memberships, accounts or journals.
+    if app.state.settings.is_test:
+        app.state.memberships = InMemoryStore({}, [])
+        app.state.accounting_store = AccountingStore()
+        app.state.users = UserDirectory()
+    else:
+        persistent = PostgresStore(app.state.settings.database_url)
+        app.state.memberships = persistent
+        app.state.accounting_store = persistent
+        app.state.users = persistent
     yield
 
 
