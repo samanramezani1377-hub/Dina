@@ -1,21 +1,20 @@
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const DinaApp());
-}
+import 'app/api/api_client.dart';
+import 'app/app.dart';
+import 'app/config/app_config.dart';
+import 'app/storage/key_value_store.dart';
 
-class DinaApp extends StatelessWidget {
-  const DinaApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'دینا',
-      debugShowCheckedModeBanner: false,
-      home: Scaffold(
-        appBar: AppBar(title: const Text('دینا')),
-        body: const Center(child: Text('دینا آماده اتصال به Backend است.')),
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final KeyValueStore store = await SharedPreferencesKeyValueStore.open();
+  runApp(
+    DinaApp(
+      dependencies: buildDinaAppDependencies(
+        store: store,
+        transport: PackageHttpTransport(),
+        baseUrl: AppConfig.apiRoot,
       ),
-    );
-  }
+    ),
+  );
 }
