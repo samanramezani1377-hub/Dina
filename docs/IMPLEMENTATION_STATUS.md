@@ -9,6 +9,7 @@
 - Double-entry validation و API آن
 - PostgreSQL schema پایه حسابداری
 - تست API، امنیت، tenant isolation و تراز بدهکار/بستانکار
+- گزارش تراز بدهکار/بستانکار (`GET /api/v1/organizations/{organization_id}/trial-balance`) با پارامتر اختیاری `as_of`، فقط بر اساس اسناد posted/reversed؛ اگر جمع بدهکار و بستانکار برابر نباشد، ارقام واقعی به‌همراه `is_balanced: false`، کد خطای `trial_balance_unbalanced` و اختلاف دقیق برگردانده می‌شود و در لاگ و audit ثبت می‌گردد؛ اختلاف هرگز خودکار اصلاح نمی‌شود.
 - CI واقعی Backend و Flutter
 
 ## گام بعد

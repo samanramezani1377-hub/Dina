@@ -1,8 +1,10 @@
-"""The ledger read endpoint.
+"""The accounting read endpoints: the ledger and the trial balance.
 
-Kept in its own module rather than in ``main.py`` so the route, its request
-parsing and its error mapping sit together and can be tested without booting
-the whole application.
+Kept in one module rather than in ``main.py`` so the routes, their request
+parsing and their error mapping sit together and can be tested without booting
+the whole application. Both reports read the same posted-only source
+(:data:`src.models.LEDGER_STATUSES`) through the same dependency, so they cannot
+drift apart on which entries count.
 
 Three checks run before any arithmetic, in this order:
 
@@ -30,6 +32,7 @@ from .identity import AuthenticationError, Caller, current_user_id, resolve_call
 from .ledger import LedgerFilter, build_ledger, ledger_to_dict
 from .permissions import ACCOUNTING_ROLE, has_role
 from .store import InMemoryStore
+from .trial_balance import build_trial_balance, report_imbalance, trial_balance_to_dict
 
 router = APIRouter(prefix="/api/v1/organizations", tags=["accounting"])
 
@@ -125,3 +128,38 @@ def read_ledger(
     except AccountingError as exc:
         raise _to_http_error(exc) from exc
     return ledger_to_dict(ledger)
+
+
+@router.get("/{organization_id}/trial-balance")
+def read_trial_balance(
+    organization_id: int,
+    caller: Caller = Depends(require_accounting_caller),
+    accounting_store: AccountingStore = Depends(get_accounting_store),
+    as_of: date | None = Query(
+        default=None,
+        description=(
+            "Inclusive last day to report on. Omit it for every posted entry "
+            "so far, which is not the same as a report as of today."
+        ),
+    ),
+) -> dict[str, object]:
+    """Return the trial balance of one organization.
+
+    Cumulative rather than per-period: without a lower bound, each account
+    carries every posted entry up to ``as_of`` on each side, plus the signed
+    net balance. Amounts are exact decimal strings.
+
+    An organization whose entries do not balance still gets its figures. The
+    response is 200 with ``is_balanced: false``, the exact ``difference`` and a
+    structured ``error`` carrying :data:`src.trial_balance.
+    TRIAL_BALANCE_UNBALANCED`; the difference is logged and audited on the way
+    out. The report is never adjusted to look balanced — see
+    :mod:`src.trial_balance`.
+    """
+    try:
+        balance = build_trial_balance(accounting_store, organization_id, as_of)
+    except AccountingError as exc:
+        raise _to_http_error(exc) from exc
+    if not balance.is_balanced:
+        report_imbalance(balance, user_id=caller.user_id)
+    return trial_balance_to_dict(balance)
