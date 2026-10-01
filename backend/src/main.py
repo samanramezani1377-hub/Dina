@@ -16,15 +16,16 @@ contains a Python exception's text.
 from contextlib import asynccontextmanager
 from decimal import Decimal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 from .accounting import validate_journal
 from .accounting_store import AccountingStore
+from .audit import AuditAction, record
 from .auth import UserDirectory
 from .auth_api import router as auth_router
 from .config import get_settings
-from .errors import register_error_handlers
+from .errors import ApiError, register_error_handlers
 from .ledger_api import router as ledger_router
 from .models import JournalLine
 from .store import InMemoryStore
@@ -72,22 +73,66 @@ def health() -> dict[str, str]:
 
 
 @app.post("/api/v1/accounting/journals/validate")
-def validate(payload: JournalInput) -> dict[str, object]:
+def validate(payload: JournalInput, request: Request = None) -> dict[str, object]:
     """Check a journal's arithmetic without storing anything.
 
     The route deliberately adds no tenant check of its own: it performs no read
-    and no write, so it cannot leak another organization's data. The audit
-    wiring that the append-only audit service needs is not present on this
-    branch and is restored by the landing bead.
+    and no write against any organization's data, so it cannot leak another
+    tenant's records. Every read of tenant data in this service goes through the
+    authenticated routers (``ledger_router``, ``auth_router``), which resolve the
+    organization from the caller's membership rather than from a request body.
 
     A journal that breaks a rule is answered with the rule's own code —
     ``journal_empty``, ``amount_must_be_non_negative``,
     ``line_must_have_exactly_one_side`` or ``journal_not_balanced`` — in the
     envelope, with the figures that failed in ``details``. The exception raised
-    by :func:`src.accounting.validate_journal` is already coded, so there is
-    nothing here to catch and re-shape.
+    by :func:`src.accounting.validate_journal` is already coded, so all this
+    route does is record the audit trail and re-raise for
+    :mod:`src.errors` to turn into a response.
+
+    **Tenant keying.** The route is unauthenticated, so the body's
+    ``organization_id`` is a client claim and MUST NOT be trusted as an
+    authorization. The audit row is therefore written with
+    ``organization_id=None`` and the claimed id is kept only under the
+    non-authoritative ``claimed_organization_id`` key. An anonymous caller can
+    never land a row inside another tenant's trail. Once this endpoint is
+    placed behind authentication, the organization must be resolved from the
+    caller's membership and the body field ignored entirely — see the
+    ``TODO(auth)`` above and ``docs/IMPLEMENTATION_STATUS.md``.
+
+    Both outcomes are recorded: a rejected attempt is exactly as auditable as an
+    accepted one, which is the point of keeping a trail. ``record`` never
+    raises, so an audit-store failure cannot change the answer the client gets.
     """
-    validate_journal([JournalLine(**line.model_dump()) for line in payload.lines])
+    details = {
+        "document_no": payload.document_no,
+        "line_count": len(payload.lines),
+        "claimed_organization_id": payload.organization_id,
+    }
+
+    try:
+        validate_journal([JournalLine(**line.model_dump()) for line in payload.lines])
+    except ApiError as exc:
+        record(
+            action=AuditAction.JOURNAL_CREATED,
+            entity="journal_entry",
+            entity_id=None,
+            organization_id=None,
+            metadata={**details, "outcome": "rejected", "reason_code": exc.code},
+            correlation_id=_correlation_id(request),
+            ip_address=_ip_address(request),
+        )
+        raise
+
+    record(
+        action=AuditAction.JOURNAL_CREATED,
+        entity="journal_entry",
+        entity_id=None,
+        organization_id=None,
+        metadata={**details, "outcome": "validated"},
+        correlation_id=_correlation_id(request),
+        ip_address=_ip_address(request),
+    )
     return {
         "valid": True,
         "organization_id": payload.organization_id,
@@ -95,3 +140,23 @@ def validate(payload: JournalInput) -> dict[str, object]:
         "description": payload.description,
         "lines": len(payload.lines),
     }
+
+
+def _correlation_id(request: Request | None) -> str | None:
+    """The caller's correlation id, or ``None`` when the request is anonymous.
+
+    Deliberately *not* :func:`src.errors.correlation_id`: that helper mints an
+    id when the client supplied none, which is the right behaviour for a log
+    line but wrong for an audit column — a row should record the id that
+    actually arrived, never one this process made up.
+    """
+    if request is None:
+        return None
+    value = request.headers.get("x-request-id") or request.headers.get("x-correlation-id")
+    return str(value) if value else None
+
+
+def _ip_address(request: Request | None) -> str | None:
+    if request is None or not hasattr(request, "client") or request.client is None:
+        return None
+    return request.client.host

@@ -56,6 +56,7 @@ from ledger_fixtures import (
 )
 from src.accounting import validate_journal
 from src.accounting_store import AccountingError, AccountingStore
+from src.errors import ApiError, ErrorCode
 from src.models import DRAFT, POSTED, REVERSED
 
 #: An organization id that is deliberately never registered with the store, used
@@ -197,7 +198,7 @@ def test_a_line_with_neither_a_debit_nor_a_credit_is_refused(accounting_store):
     assert accounting_store.list_entries(ORGANIZATION_ID) == []
 
 
-def test_an_empty_journal_is_refused_with_journal_must_have_lines(accounting_store):
+def test_an_empty_journal_is_refused_with_journal_empty(accounting_store):
     """Case: a journal with no lines is refused, by name.
 
     The guard is doubled on purpose -- the store refuses an empty line list
@@ -206,11 +207,17 @@ def test_an_empty_journal_is_refused_with_journal_must_have_lines(accounting_sto
     entry point a future caller uses. Removing either copy leaves the invariant
     enforced and this test green; removing both lets an empty entry through and
     turns it red.
+
+    The code is ``journal_empty``, not the older ``journal_must_have_lines``.
+    It is part of the documented registry in ``docs/ERROR_CODES.md``, so it has
+    to be spelled the way clients are told to expect it; an unregistered code
+    would be answered as a 400 by :func:`src.errors.status_for` instead of the
+    422 a malformed document deserves.
     """
     with pytest.raises(AccountingError) as refused:
         add_entry(accounting_store, [], document_no="JV-EMPTY")
 
-    assert refused.value.code == "journal_must_have_lines"
+    assert refused.value.code == ErrorCode.JOURNAL_EMPTY == "journal_empty"
     assert accounting_store.list_entries(ORGANIZATION_ID) == []
 
 
@@ -223,11 +230,16 @@ def test_the_journal_validator_itself_refuses_an_empty_journal():
     thing standing between a caller and an entry with no lines -- and a future
     second caller of :func:`src.accounting.validate_journal` would have nothing
     left.
+
+    The refusal is an :class:`~src.errors.ApiError` carrying the code, which is
+    what the rules raise everywhere else; it is asserted on ``.code`` rather
+    than on ``str(exc)`` because the message is prose meant to be read, while
+    the code is the contract a client branches on.
     """
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(ApiError) as refused:
         validate_journal([])
 
-    assert str(refused.value) == "journal_must_have_lines"
+    assert refused.value.code == ErrorCode.JOURNAL_EMPTY
 
 
 # -- posting: who may post, and whose rows they may touch --------------------

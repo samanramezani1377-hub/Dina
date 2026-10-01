@@ -264,15 +264,21 @@ class AccountingStore:
         if lines is not None:
             if not lines:
                 raise AccountingError(
-                    "journal_must_have_lines",
-                    "a journal entry must have at least one line",
+                    ErrorCode.JOURNAL_EMPTY, "a journal entry must have at least one line"
                 )
             for line in lines:
                 self.get_account(organization_id, line.account_id)
             try:
                 validate_journal(lines)
-            except ValueError as exc:
-                raise AccountingError(str(exc), str(exc)) from exc
+            except ApiError as exc:
+                # Same wrapping as add_entry: the journal rules already speak
+                # the error contract, so the code and details carry over
+                # unchanged. Catching ValueError here would not catch an
+                # ApiError at all -- AccountingError inherits from ValueError,
+                # but the rules raise the ApiError base -- so a raw domain
+                # error would escape update_entry and a caller catching
+                # AccountingError alone would see a crash instead of a refusal.
+                raise AccountingError(exc.code, exc.message, exc.details) from exc
         return self._store(
             replace(
                 entry,
