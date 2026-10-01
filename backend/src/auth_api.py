@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from .auth import UserDirectory, issue_access_token, token_user_id
 from .config import Settings, get_settings
 from .security import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
+from .audit import AuditAction, record
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -62,7 +63,13 @@ def register(
     Returns the same token shape as :func:`login`, so a client does not need a
     second round trip after registering.
     """
-    user = users.register(payload.email, payload.password)
+    try:
+        user = users.register(payload.email, payload.password)
+    except Exception:
+        record(action=AuditAction.LOGIN_FAILED, entity="user", metadata={"operation": "register"})
+        raise
+    record(action=AuditAction.LOGIN_SUCCEEDED, entity="user", entity_id=user.user_id,
+           user_id=user.user_id, metadata={"operation": "register"})
     return {
         "user_id": user.user_id,
         "email": user.email,
@@ -83,7 +90,13 @@ def login(
     the caller, and the comparison costs about the same either way — see
     :meth:`src.auth.UserDirectory.authenticate`.
     """
-    user = users.authenticate(payload.email, payload.password)
+    try:
+        user = users.authenticate(payload.email, payload.password)
+    except Exception:
+        record(action=AuditAction.LOGIN_FAILED, entity="user", metadata={"operation": "login"})
+        raise
+    record(action=AuditAction.LOGIN_SUCCEEDED, entity="user", entity_id=user.user_id,
+           user_id=user.user_id, metadata={"operation": "login"})
     return {
         "user_id": user.user_id,
         "email": user.email,
