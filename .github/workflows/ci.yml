@@ -43,6 +43,13 @@ jobs:
       POSTGRES_USER: dina
       POSTGRES_PASSWORD: dina
       POSTGRES_DB: dina_test
+      # psql does NOT read POSTGRES_PASSWORD; it authenticates with PGPASSWORD,
+      # a .pgpass file or a peer/trust socket. Setting only the former made the
+      # first psql call fail with "fe_sendauth: no password supplied" on run
+      # 36863404514, so the two are kept in step deliberately rather than by
+      # accident. Exporting it once here covers every psql call below, including
+      # any added later.
+      PGPASSWORD: dina
       # Read by backend/tests/test_audit_postgres.py, which is the whole reason
       # the service container exists. An integration test that silently skipped
       # here would report the audit trail as covered while testing nothing, so
