@@ -18,6 +18,7 @@ from decimal import Decimal
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
+import psycopg
 
 from .accounting import validate_journal
 from .accounting_store import AccountingStore
@@ -32,6 +33,9 @@ from .models import JournalLine
 from .postgres_store import PostgresStore
 from .store import InMemoryStore
 from .business_store import BusinessStore, TenantStore
+
+def _audit_connect(database_url: str):
+    return psycopg.connect(database_url.replace("postgresql+psycopg://", "postgresql://", 1))
 
 
 @asynccontextmanager
@@ -53,7 +57,7 @@ async def lifespan(app: FastAPI):
         app.state.accounting_store = persistent
         app.state.users = persistent
         app.state.business_store = BusinessStore(app.state.settings.database_url)
-        set_default_store(PostgresAuditStore(persistent._connect))
+        set_default_store(PostgresAuditStore(lambda: _audit_connect(app.state.settings.database_url)))
     yield
 
 
