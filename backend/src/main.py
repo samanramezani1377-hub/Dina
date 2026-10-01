@@ -21,15 +21,17 @@ from pydantic import BaseModel
 
 from .accounting import validate_journal
 from .accounting_store import AccountingStore
-from .audit import AuditAction, record
+from .audit import AuditAction, PostgresAuditStore, record, set_default_store
 from .auth import UserDirectory
 from .auth_api import router as auth_router
 from .config import get_settings
 from .errors import ApiError, register_error_handlers
 from .ledger_api import router as ledger_router
+from .operations_api import router as operations_router
 from .models import JournalLine
 from .postgres_store import PostgresStore
 from .store import InMemoryStore
+from .business_store import BusinessStore, TenantStore
 
 
 @asynccontextmanager
@@ -44,17 +46,21 @@ async def lifespan(app: FastAPI):
         app.state.memberships = InMemoryStore({}, [])
         app.state.accounting_store = AccountingStore()
         app.state.users = UserDirectory()
+        app.state.business_store = BusinessStore()
     else:
         persistent = PostgresStore(app.state.settings.database_url)
-        app.state.memberships = persistent
+        app.state.memberships = TenantStore(app.state.settings.database_url)
         app.state.accounting_store = persistent
         app.state.users = persistent
+        app.state.business_store = BusinessStore(app.state.settings.database_url)
+        set_default_store(PostgresAuditStore(persistent._connect))
     yield
 
 
 app = FastAPI(title="Dina API", version="0.3.0", lifespan=lifespan)
 app.include_router(ledger_router)
 app.include_router(auth_router)
+app.include_router(operations_router)
 # Handlers are dispatched by exception type at request time, so this can sit
 # after the routers without changing which failure goes where.
 register_error_handlers(app)
