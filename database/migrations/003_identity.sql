@@ -1,3 +1,8 @@
+-- Dina persistence completion: missing journal entry date is added here so
+-- the durable row can represent the same JournalEntry as the domain model.
+ALTER TABLE journal_entries
+    ADD COLUMN IF NOT EXISTS entry_date DATE NOT NULL DEFAULT CURRENT_DATE;
+
 -- Dina identity persistence.
 -- Users and memberships are tenant-scoped records used by the production repositories.
 
