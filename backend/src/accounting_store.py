@@ -229,6 +229,104 @@ class AccountingStore:
             )
         return self._store(replace(entry, status=POSTED, posted_at=datetime.now(timezone.utc)))
 
+    def update_entry(
+        self,
+        organization_id: int,
+        entry_id: int,
+        *,
+        description: str | None = None,
+        entry_date: date | None = None,
+        lines: list[JournalLine] | None = None,
+    ) -> JournalEntry:
+        """Edit a draft in place. Anything already posted is refused.
+
+        A posted or reversed entry is a financial fact, and the spec's rule is
+        that such a record is never edited destructively -- a mistake is put
+        right by reversing it and posting the correction
+        (:meth:`reverse_entry`). Editing here would rewrite history that the
+        ledger, the trial balance and the audit trail have already reported.
+
+        The draft's own invariants are re-checked exactly as :meth:`add_entry`
+        checks them, so editing cannot be used to smuggle in an unbalanced or
+        cross-tenant journal that creating one would have refused.
+
+        Raises:
+            AccountingError: ``journal_immutable`` unless the entry is a draft,
+                plus every code :meth:`add_entry` raises for the new values.
+        """
+        entry = self.get_entry(organization_id, entry_id)
+        self._require_draft(entry, "edited")
+        if lines is not None:
+            if not lines:
+                raise AccountingError(
+                    "journal_must_have_lines",
+                    "a journal entry must have at least one line",
+                )
+            for line in lines:
+                self.get_account(organization_id, line.account_id)
+            try:
+                validate_journal(lines)
+            except ValueError as exc:
+                raise AccountingError(str(exc), str(exc)) from exc
+        return self._store(
+            replace(
+                entry,
+                description=entry.description if description is None else description,
+                entry_date=entry.entry_date if entry_date is None else entry_date,
+                lines=entry.lines
+                if lines is None
+                else tuple(
+                    EntryLine(
+                        entry_id=entry.id,
+                        line_no=position,
+                        account_id=line.account_id,
+                        debit=to_money(line.debit),
+                        credit=to_money(line.credit),
+                    )
+                    for position, line in enumerate(lines, start=1)
+                ),
+            )
+        )
+
+    def delete_entry(self, organization_id: int, entry_id: int) -> None:
+        """Delete a draft. A posted or reversed entry is refused.
+
+        A draft was never a financial fact -- it never reached the ledger -- so
+        removing one destroys nothing that was ever reported. A posted entry is
+        the opposite: it is in the ledger, in the trial balance and in the audit
+        trail, so it is reversed rather than deleted.
+
+        Raises:
+            AccountingError: ``journal_immutable`` unless the entry is a draft.
+        """
+        entry = self.get_entry(organization_id, entry_id)
+        self._require_draft(entry, "deleted")
+        del self._entries[entry_id]
+
+    def list_entries(self, organization_id: int) -> list[JournalEntry]:
+        """Every entry of one organization, in id order, whatever its status.
+
+        Unlike :meth:`ledger_entries` this does not filter by status: it is the
+        read that answers "is this draft still a draft?", which is how a caller
+        -- and a test -- checks that a rejected write left nothing behind. Drafts
+        are included and posts are, so the list is the store's whole truth about
+        one tenant's journal.
+
+        Raises:
+            AccountingError: ``organization_not_found`` if the organization is
+                unknown. There is no unfiltered list on purpose: a caller with no
+                organization has no scope to read in.
+        """
+        self._require_organization(organization_id)
+        return sorted(
+            (
+                entry
+                for entry in self._entries.values()
+                if entry.organization_id == organization_id
+            ),
+            key=lambda entry: entry.id,
+        )
+
     def reverse_entry(
         self,
         organization_id: int,
@@ -319,6 +417,21 @@ class AccountingStore:
         )
 
     # -- internals --------------------------------------------------------
+
+    def _require_draft(self, entry: JournalEntry, action: str) -> None:
+        """Refuse any mutation of an entry that is no longer a draft.
+
+        The single place the rule lives. ``post_entry``, :meth:`update_entry` and
+        :meth:`delete_entry` all have to answer "may this entry still change?",
+        and three copies of the answer is three chances for one of them to say
+        yes where the other two say no.
+        """
+        if entry.status != DRAFT:
+            raise AccountingError(
+                "journal_immutable",
+                f"entry {entry.id} is {entry.status} and cannot be {action}; "
+                f"post a correcting entry and reverse it instead",
+            )
 
     def _require_organization(self, organization_id: int) -> None:
         if organization_id not in self._organizations:
