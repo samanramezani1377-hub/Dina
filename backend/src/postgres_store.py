@@ -291,7 +291,7 @@ class PostgresStore:
         return self.get_entry(organization_id, new_id)
 
     # user repository used by auth routes
-    def register_user(self, email: str, password: str) -> User:
+    def register(self, email: str, password: str) -> User:
         email = normalise_email(email)
         password_hash = hash_password(password)
         try:
@@ -305,7 +305,7 @@ class PostgresStore:
                            {"field": "email"}) from exc
         return User(user_id=int(row["id"]), email=row["email"], password_hash=row["password_hash"], is_active=row["is_active"])
 
-    def authenticate_user(self, email: str, password: str) -> User:
+    def authenticate(self, email: str, password: str) -> User:
         try:
             email = normalise_email(email)
         except ApiError:
@@ -324,7 +324,7 @@ class PostgresStore:
             user = User(user.user_id, user.email, refreshed, user.is_active)
         return user
 
-    def get_user(self, user_id: int) -> User | None:
+    def get(self, user_id: int) -> User | None:
         with self._connect() as conn:
             row = conn.execute("SELECT id,email,password_hash,is_active FROM users WHERE id=%s", (user_id,)).fetchone()
         return None if row is None else User(user_id=int(row["id"]), email=row["email"], password_hash=row["password_hash"], is_active=row["is_active"])
