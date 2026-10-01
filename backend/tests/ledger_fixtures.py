@@ -12,7 +12,7 @@ Every fixture builds a fresh store, so no test can see another test's postings.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -20,7 +20,16 @@ from fastapi.testclient import TestClient
 
 from src.accounting_store import AccountingStore
 from src.main import app
-from src.models import DRAFT, POSTED, JournalLine, Membership, Organization
+from src.models import (
+    DRAFT,
+    POSTED,
+    EntryLine,
+    JournalEntry,
+    JournalLine,
+    Membership,
+    Organization,
+)
+from src.money import to_money
 from src.store import InMemoryStore
 
 #: Two organizations, so tenant isolation is always testable. Org 1 is the one
@@ -100,12 +109,39 @@ def ledger_url() -> str:
     return f"/api/v1/organizations/{ORGANIZATION_ID}/ledger"
 
 
+@pytest.fixture
+def trial_balance_client(accounting_store, memberships) -> TestClient:
+    """A booted app whose stores are the fixtures above.
+
+    Deliberately the same client as ``ledger_client`` rather than a second
+    construction: both reports are served by one app reading one pair of stores,
+    and a test that used a differently-built client would be comparing against a
+    setup the endpoint never actually runs with.
+    """
+    with TestClient(app) as test_client:
+        test_client.app.state.accounting_store = accounting_store
+        test_client.app.state.memberships = memberships
+        yield test_client
+
+
+@pytest.fixture
+def trial_balance_url() -> str:
+    return f"/api/v1/organizations/{ORGANIZATION_ID}/trial-balance"
+
+
 def as_accountant(user_id: int = ACCOUNTANT_USER_ID) -> dict[str, str]:
     return {"X-User-Id": str(user_id)}
 
 
 def get_ledger(client: TestClient, url: str, **params) -> dict:
     """GET the ledger as an accountant. Tests pass ``params=`` for filters."""
+    response = client.get(url, headers=as_accountant(), params=params or None)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def get_trial_balance(client: TestClient, url: str, **params) -> dict:
+    """GET the trial balance as an accountant. Tests pass ``params=`` for filters."""
     response = client.get(url, headers=as_accountant(), params=params or None)
     assert response.status_code == 200, response.text
     return response.json()
@@ -187,6 +223,55 @@ def client_as(accounting_store):
         return test_client
 
     return build
+
+
+def force_unbalanced_posted_entry(
+    accounting_store: AccountingStore,
+    document_no: str,
+    entry_date: date,
+    lines: list[JournalLine],
+    organization_id: int = ORGANIZATION_ID,
+    description: str = "forced corruption fixture",
+) -> int:
+    """Write a deliberately unbalanced entry straight into the store, posted.
+
+    This is the corruption fixture the trial balance's imbalance path needs, and
+    it is a *test-side* door into the storage layer on purpose: the store's
+    public API refuses an unbalanced journal, and weakening
+    :func:`src.accounting.validate_journal` to let one in would delete the
+    invariant the rest of the suite exists to protect. Reaching past the public
+    API is the equivalent of a database fixture that inserts a row the
+    application would refuse to write — the same thing a real deployment gets
+    from a bad migration, a direct ``INSERT`` or a partially failed import, and
+    precisely the state the report has to survive.
+
+    Only the imbalance is manufactured: the entry is a real ``JournalEntry``
+    with real ``EntryLine`` rows, and the store reads it back through its normal
+    ``ledger_entries`` path, so nothing downstream knows it was forced.
+    """
+    entry_id = next(accounting_store._entry_ids)
+    stored = JournalEntry(
+        id=entry_id,
+        organization_id=organization_id,
+        document_no=document_no,
+        description=description,
+        status=POSTED,
+        entry_date=entry_date,
+        posted_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        reversal_of_entry_id=None,
+        lines=tuple(
+            EntryLine(
+                entry_id=entry_id,
+                line_no=position,
+                account_id=line.account_id,
+                debit=to_money(line.debit),
+                credit=to_money(line.credit),
+            )
+            for position, line in enumerate(lines, start=1)
+        ),
+    )
+    accounting_store._entries[entry_id] = stored
+    return entry_id
 
 
 def other_org_account_id(accounting_store: AccountingStore, code: str = "1100") -> int:
