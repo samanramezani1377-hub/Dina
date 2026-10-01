@@ -100,6 +100,15 @@ def store(dsn: str) -> PostgresAuditStore:
         # TRUNCATE, not DELETE: the append-only trigger rejects DELETE by
         # design, so deleting rows to clean up between tests would fail.
         conn.execute("TRUNCATE audit_logs")
+        # 002_audit_logs.sql attaches the organization FK when the accounting
+        # migration has already created the table. Seed the tenant rows used by
+        # these tests so the real database enforces the same relationship the
+        # application relies on.
+        conn.execute(
+            "INSERT INTO organizations (id, name) VALUES "
+            "(1, 'Test Org 1'), (2, 'Test Org 2'), (3, 'Test Org 3'), (5, 'Test Org 5') "
+            "ON CONFLICT (id) DO NOTHING"
+        )
         conn.commit()
     return PostgresAuditStore(lambda: psycopg.connect(dsn))
 
@@ -117,6 +126,9 @@ def _entry(**overrides) -> AuditEntry:
         "correlation_id": "req-1",
         "ip_address": "203.0.113.9",
     }
+    document_no = overrides.pop("document_no", None)
+    if document_no is not None:
+        fields["metadata"] = {"document_no": document_no}
     fields.update(overrides)
     return AuditEntry(**fields)
 
