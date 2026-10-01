@@ -207,13 +207,24 @@ void main() {
       // Cold start resolves the session before it can build a request, so the
       // first request must already carry the token. A header that is empty here
       // would look like a signed-out user to the server.
+      //
+      // Compared through a helper that reports only whether it matched: an
+      // equality assertion on the header prints the token into the failure
+      // output of a CI log.
       expect(
-        transport.requestFor('GET', '/api/v1/auth/me').authorization,
-        'Bearer persisted-token',
+        transport.requestFor('GET', '/api/v1/auth/me').carriesBearerToken(
+          'persisted-token',
+        ),
+        isTrue,
+        reason: 'the very first /auth/me request must present the restored token',
       );
       expect(
-        transport.requestFor('GET', '/api/v1/organizations').authorization,
-        'Bearer persisted-token',
+        transport.requestFor(
+          'GET',
+          '/api/v1/organizations',
+        ).carriesBearerToken('persisted-token'),
+        isTrue,
+        reason: 'every request after the first must keep presenting the token',
       );
     });
 

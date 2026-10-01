@@ -133,6 +133,13 @@ class RecordedRequest {
 
   String? get authorization => headers['authorization'];
 
+  /// Whether this request presented exactly `Bearer <expected>`.
+  ///
+  /// Returns a bool rather than the header so a failing `expect` cannot print
+  /// the credential into the test output.
+  bool carriesBearerToken(String expected) =>
+      headers['authorization'] == 'Bearer $expected';
+
   Map<String, Object?> get jsonBody =>
       (body == null || body!.isEmpty) ? <String, Object?>{} : jsonDecode(body!) as Map<String, Object?>;
 }
