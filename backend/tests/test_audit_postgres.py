@@ -95,7 +95,19 @@ def dsn() -> str:
 
 @pytest.fixture()
 def store(dsn: str) -> PostgresAuditStore:
-    """A store over a clean ``audit_logs`` table."""
+    """A store over a clean ``audit_logs`` table.
+
+    ``audit_logs.organization_id`` carries a real foreign key to
+    ``organizations`` (migration 001 creates that table, and 002 attaches the
+    constraint conditionally precisely when it exists). The tenant ids used by
+    these tests are therefore inserted as real organizations rather than
+    invented: an invented id fails with a ForeignKeyViolation, which says
+    nothing about the store.
+
+    ``user_id`` is left alone. ``002_audit_logs.sql`` only attaches its
+    ``users`` foreign key if a ``users`` table exists, and no migration creates
+    one yet, so the column is a bare BIGINT here.
+    """
     with psycopg.connect(dsn) as conn:
         # TRUNCATE, not DELETE: the append-only trigger rejects DELETE by
         # design, so deleting rows to clean up between tests would fail.
@@ -113,16 +125,51 @@ def store(dsn: str) -> PostgresAuditStore:
     return PostgresAuditStore(lambda: psycopg.connect(dsn))
 
 
-def _entry(**overrides) -> AuditEntry:
+@pytest.fixture(scope="module")
+def organizations(dsn: str) -> dict[str, int]:
+    """Real organization rows, keyed by the names the tests refer to them by.
+
+    Module-scoped and inserted once: the ids are stable for the whole run, and
+    every test truncates only ``audit_logs``, so these rows survive between
+    tests. Inserted with ``ON CONFLICT DO NOTHING`` against the primary key so a
+    rerun against the same database does not fail on the second attempt.
+    """
+    wanted = {
+        "primary": 101,
+        "other": 202,
+        "absent": 303,
+    }
+    with psycopg.connect(dsn) as conn:
+        for name, org_id in wanted.items():
+            conn.execute(
+                "INSERT INTO organizations (id, name) VALUES (%s, %s) "
+                "ON CONFLICT (id) DO NOTHING",
+                (org_id, f"test-{name}"),
+            )
+        conn.commit()
+    return dict(wanted)
+
+
+def _entry(
+    organization_id: int | None,
+    document_no: str = "JV-1",
+    **overrides,
+) -> AuditEntry:
+    """One audit row to append.
+
+    ``document_no`` is a convenience for the tests and lands in ``metadata``,
+    which is where the service actually carries it -- ``AuditEntry`` has no
+    such field, so passing it as a dataclass kwarg would be a TypeError.
+    """
     fields = {
         "id": 0,
-        "organization_id": 5,
+        "organization_id": organization_id,
         "user_id": 7,
         "action": AuditAction.JOURNAL_POSTED,
         "entity": "journal_entry",
         "entity_id": "42",
         "occurred_at": datetime.now(timezone.utc),
-        "metadata": {"document_no": "JV-1"},
+        "metadata": {"document_no": document_no},
         "correlation_id": "req-1",
         "ip_address": "203.0.113.9",
     }
@@ -138,14 +185,17 @@ def _entry(**overrides) -> AuditEntry:
 # --------------------------------------------------------------------------
 
 
-def test_a_row_round_trips_through_the_real_table(store: PostgresAuditStore):
-    stored = store.append(_entry())
+def test_a_row_round_trips_through_the_real_table(
+    store: PostgresAuditStore, organizations: dict[str, int]
+):
+    org = organizations["primary"]
+    stored = store.append(_entry(org))
 
     assert stored.id > 0, "the server assigns the id"
-    rows = store.list_for_organization(5)
+    rows = store.list_for_organization(org)
     assert len(rows) == 1
     row = rows[0]
-    assert row.organization_id == 5
+    assert row.organization_id == org
     assert row.user_id == 7
     assert row.action == AuditAction.JOURNAL_POSTED
     assert row.entity == "journal_entry"
@@ -156,15 +206,18 @@ def test_a_row_round_trips_through_the_real_table(store: PostgresAuditStore):
     assert row.occurred_at is not None
 
 
-def test_ids_increase_so_the_trail_is_ordered(store: PostgresAuditStore):
-    first = store.append(_entry(document_no="A"))
-    second = store.append(_entry(document_no="B"))
+def test_ids_increase_so_the_trail_is_ordered(
+    store: PostgresAuditStore, organizations: dict[str, int]
+):
+    org = organizations["primary"]
+    first = store.append(_entry(org, document_no="A"))
+    second = store.append(_entry(org, document_no="B"))
 
     assert second.id > first.id
-    assert [r.metadata["document_no"] for r in store.list_for_organization(5)] == ["A", "B"]
+    assert [r.metadata["document_no"] for r in store.list_for_organization(org)] == ["A", "B"]
 
 
-def test_a_system_event_may_have_no_tenant(store: PostgresAuditStore):
+def test_a_system_event_may_have_no_tenant(store: PostgresAuditStore, dsn: str):
     """A login that never resolved to a tenant is still auditable.
 
     ``organization_id`` is nullable in the schema on purpose; a NOT NULL column
@@ -175,9 +228,10 @@ def test_a_system_event_may_have_no_tenant(store: PostgresAuditStore):
 
     assert row is not None, "the write must succeed, not be swallowed"
     assert row.organization_id is None
-    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+    with psycopg.connect(dsn) as conn:
         stored = conn.execute(
-            "SELECT organization_id FROM audit_logs WHERE action = %s", (AuditAction.LOGIN_SUCCEEDED,)
+            "SELECT organization_id FROM audit_logs WHERE action = %s",
+            (AuditAction.LOGIN_SUCCEEDED,),
         ).fetchall()
     assert stored == [(None,)]
 
@@ -187,37 +241,50 @@ def test_a_system_event_may_have_no_tenant(store: PostgresAuditStore):
 # --------------------------------------------------------------------------
 
 
-def test_rows_are_scoped_to_their_tenant(store: PostgresAuditStore):
-    store.append(_entry(organization_id=1, document_no="one"))
-    store.append(_entry(organization_id=2, document_no="two"))
+def test_rows_are_scoped_to_their_tenant(
+    store: PostgresAuditStore, organizations: dict[str, int]
+):
+    store.append(_entry(organizations["primary"], document_no="one"))
+    store.append(_entry(organizations["other"], document_no="two"))
 
-    assert [r.metadata["document_no"] for r in store.list_for_organization(1)] == ["one"]
-    assert [r.metadata["document_no"] for r in store.list_for_organization(2)] == ["two"]
-    assert store.list_for_organization(3) == []
+    assert [r.metadata["document_no"] for r in store.list_for_organization(organizations["primary"])] == [
+        "one"
+    ]
+    assert [r.metadata["document_no"] for r in store.list_for_organization(organizations["other"])] == [
+        "two"
+    ]
+    # A real organization with no rows: an empty list, not an error.
+    assert store.list_for_organization(organizations["absent"]) == []
 
 
-def test_the_query_helper_still_refuses_a_cross_tenant_read(store: PostgresAuditStore):
-    store.append(_entry(organization_id=1))
+def test_the_query_helper_still_refuses_a_cross_tenant_read(
+    store: PostgresAuditStore, organizations: dict[str, int]
+):
+    store.append(_entry(organizations["primary"]))
 
     with pytest.raises(AuditError):
-        query_for_organization(store, 2, caller_organization_id=1, role="owner")
+        query_for_organization(
+            store, organizations["other"], caller_organization_id=organizations["primary"], role="owner"
+        )
 
 
 def test_the_tenant_filter_is_a_bound_parameter_not_string_interpolation(
-    store: PostgresAuditStore, dsn: str
+    store: PostgresAuditStore, organizations: dict[str, int], dsn: str
 ):
     """The filter must not be built by pasting the tenant id into SQL."""
-    store.append(_entry(organization_id=5))
-    # If the id were interpolated, this would parse as valid SQL that returns
-    # nothing (or error). Sent as data, it simply matches no rows.
+    org = organizations["primary"]
+    store.append(_entry(org))
+    # Sent as data, this matches no rows. Interpolated into the SQL it would
+    # have run as a second statement.
     with psycopg.connect(dsn) as conn:
         rows = conn.execute(
-            "SELECT count(*) FROM audit_logs WHERE organization_id = %s", ("5; DROP TABLE audit_logs",)
+            "SELECT count(*) FROM audit_logs WHERE organization_id = %s",
+            (f"{org}; DROP TABLE audit_logs",),
         ).fetchall()
-        assert rows[0][0] == 0
+    assert rows[0][0] == 0
     # The table is still there, which is the actual assertion: the injection
     # attempt was treated as a string to match, never as SQL to run.
-    assert len(store.list_for_organization(5)) == 1
+    assert len(store.list_for_organization(org)) == 1
 
 
 # --------------------------------------------------------------------------
@@ -225,25 +292,30 @@ def test_the_tenant_filter_is_a_bound_parameter_not_string_interpolation(
 # --------------------------------------------------------------------------
 
 
-def test_the_database_rejects_an_update(store: PostgresAuditStore, dsn: str):
-    store.append(_entry())
+def test_the_database_rejects_an_update(
+    store: PostgresAuditStore, organizations: dict[str, int], dsn: str
+):
+    store.append(_entry(organizations["primary"]))
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         with psycopg.connect(dsn) as conn:
             conn.execute("UPDATE audit_logs SET action = 'tampered'")
             conn.commit()
 
 
-def test_the_database_rejects_a_delete(store: PostgresAuditStore, dsn: str):
-    store.append(_entry())
+def test_the_database_rejects_a_delete(
+    store: PostgresAuditStore, organizations: dict[str, int], dsn: str
+):
+    org = organizations["primary"]
+    store.append(_entry(org))
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         with psycopg.connect(dsn) as conn:
             conn.execute("DELETE FROM audit_logs")
             conn.commit()
-    assert len(store.list_for_organization(5)) == 1, "the row survived"
+    assert len(store.list_for_organization(org)) == 1, "the row survived"
 
 
 def test_a_failed_audit_write_leaves_the_row_count_untouched(
-    store: PostgresAuditStore, dsn: str
+    store: PostgresAuditStore, organizations: dict[str, int], dsn: str
 ):
     """A rolled-back INSERT must not leave a partial row behind."""
     with pytest.raises(psycopg.Error):
@@ -254,7 +326,7 @@ def test_a_failed_audit_write_leaves_the_row_count_untouched(
                 "VALUES ('not-a-number', 'x.created', 'thing')"
             )
             conn.commit()
-    assert store.list_for_organization(5) == []
+    assert store.list_for_organization(organizations["primary"]) == []
 
 
 # --------------------------------------------------------------------------
