@@ -18,17 +18,20 @@ Three checks run before any arithmetic, in this order:
 
 Domain failures (``account_not_found``, ``journal_not_found``) map to 404 and
 permission failures to 403. A cross-tenant id is answered with 404 rather than
-403 so a caller cannot probe for which ids exist in other organizations.
+403 so a caller cannot probe for which ids exist in other organizations. Every
+one of them leaves through the envelope defined in :mod:`src.errors`; nothing
+here builds a response by hand.
 """
 
 from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
-from .accounting_store import AccountingError, AccountingStore
-from .identity import AuthenticationError, Caller, current_user_id, resolve_caller
+from .accounting_store import AccountingStore
+from .errors import ApiError, ErrorCode
+from .identity import Caller, current_user_id, resolve_caller
 from .ledger import LedgerFilter, build_ledger, ledger_to_dict
 from .permissions import ACCOUNTING_ROLE, has_role
 from .store import InMemoryStore
@@ -59,36 +62,20 @@ def require_accounting_caller(
     actually requested rather than to one supplied in a body or query string.
 
     Raises:
-        HTTPException: 401 when the request carries no usable identity, 404 when
-            the organization does not exist, 403 when the caller is not a member
-            or ranks below ``accountant``.
+        AuthenticationError: 401 when the request carries no usable identity,
+            404 when the organization does not exist, 403 when the caller is not
+            a member or ranks below ``accountant``.
+        ApiError: ``permission_denied`` when the caller's role is too low.
     """
-    try:
-        caller = resolve_caller(user_id, organization_id, memberships)
-    except AuthenticationError as exc:
-        if exc.code == "organization_not_found":
-            raise HTTPException(404, detail=exc.code) from exc
-        if exc.code == "not_a_member":
-            # The caller is authenticated — they proved who they are. 401 would
-            # tell them to log in again, which cannot help: what is missing is a
-            # membership, not an identity. 403 is also what the contract above
-            # documents, and the error-envelope bead will inherit this code.
-            raise HTTPException(403, detail=exc.code) from exc
-        raise HTTPException(401, detail=exc.code) from exc
+    caller = resolve_caller(user_id, organization_id, memberships)
     if not has_role(caller.role, ACCOUNTING_ROLE):
-        raise HTTPException(403, detail="permission_denied")
+        raise ApiError(
+            ErrorCode.PERMISSION_DENIED,
+            f"role {caller.role!r} is below the {ACCOUNTING_ROLE!r} required for "
+            "this report",
+            {"role": caller.role, "required_role": ACCOUNTING_ROLE},
+        )
     return caller
-
-
-def _to_http_error(exc: AccountingError) -> HTTPException:
-    """Map a domain failure onto a status code.
-
-    ``not_found`` codes become 404 and everything else 422, matching the
-    validation endpoint's convention.
-    """
-    if exc.code.endswith("_not_found"):
-        return HTTPException(404, detail=exc.code)
-    return HTTPException(422, detail=exc.code)
 
 
 @router.get("/{organization_id}/ledger")
@@ -123,10 +110,9 @@ def read_ledger(
         entry_id=entry_id,
         document_no=document_no,
     )
-    try:
-        ledger = build_ledger(accounting_store, organization_id, ledger_filter)
-    except AccountingError as exc:
-        raise _to_http_error(exc) from exc
+    # A domain failure needs no translation here any more: AccountingError is an
+    # ApiError, so the code it already carries is the code that goes on the wire.
+    ledger = build_ledger(accounting_store, organization_id, ledger_filter)
     return ledger_to_dict(ledger)
 
 
@@ -156,10 +142,7 @@ def read_trial_balance(
     out. The report is never adjusted to look balanced — see
     :mod:`src.trial_balance`.
     """
-    try:
-        balance = build_trial_balance(accounting_store, organization_id, as_of)
-    except AccountingError as exc:
-        raise _to_http_error(exc) from exc
+    balance = build_trial_balance(accounting_store, organization_id, as_of)
     if not balance.is_balanced:
         report_imbalance(balance, user_id=caller.user_id)
     return trial_balance_to_dict(balance)

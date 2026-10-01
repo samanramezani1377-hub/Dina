@@ -38,15 +38,17 @@ from datetime import date
 from decimal import Decimal
 
 from .accounting_store import AccountingStore
+from .errors import ErrorCode
 from .ledger import AccountLedger, LedgerFilter, build_ledger
 from .money import format_money, money
 
 logger = logging.getLogger("dina.trial_balance")
 
 #: Stable, public error code for "the posted entries do not balance". Part of
-#: the API contract: its meaning must not change, because a client switches on
-#: it to decide that the books need a human.
-TRIAL_BALANCE_UNBALANCED = "trial_balance_unbalanced"
+#: the API contract, and registered in :data:`src.errors.ERROR_CODE_STATUS`
+#: alongside every other code: its meaning must not change, because a client
+#: switches on it to decide that the books need a human.
+TRIAL_BALANCE_UNBALANCED = ErrorCode.TRIAL_BALANCE_UNBALANCED
 
 #: Audit action recorded alongside every reported imbalance.
 AUDIT_ACTION_TRIAL_BALANCE_UNBALANCED = "trial_balance.unbalanced_reported"

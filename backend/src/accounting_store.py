@@ -22,6 +22,7 @@ from datetime import date, datetime, timezone
 from itertools import count
 
 from .accounting import validate_journal
+from .errors import ApiError, ErrorCode
 from .models import (
     ACCOUNT_TYPES,
     DRAFT,
@@ -36,13 +37,13 @@ from .models import (
 from .money import to_money
 
 
-class AccountingError(ValueError):
-    """A domain rule refused an operation. ``str(self)`` is a stable code."""
+class AccountingError(ApiError, ValueError):
+    """A domain rule refused an operation, carrying its public error code.
 
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
+    Also a :class:`ValueError`, because that is what it always was and callers
+    that catch the base class must keep working. The code is what a client sees;
+    the message is for the log.
+    """
 
 
 class AccountingStore:
@@ -86,13 +87,13 @@ class AccountingStore:
         normalised_type = account_type.strip().lower()
         if normalised_type not in ACCOUNT_TYPES:
             raise AccountingError(
-                "invalid_account_type",
+                ErrorCode.INVALID_ACCOUNT_TYPE,
                 f"account_type must be one of {', '.join(ACCOUNT_TYPES)}",
             )
         for account in self._accounts.values():
             if account.organization_id == organization_id and account.code == code:
                 raise AccountingError(
-                    "account_code_conflict",
+                    ErrorCode.ACCOUNT_CODE_CONFLICT,
                     f"account code {code} already exists in this organization",
                 )
         account = Account(
@@ -116,7 +117,7 @@ class AccountingStore:
         account = self._accounts.get(account_id)
         if account is None or account.organization_id != organization_id:
             raise AccountingError(
-                "account_not_found",
+                ErrorCode.ACCOUNT_NOT_FOUND,
                 f"account {account_id} does not exist in this organization",
             )
         return account
@@ -158,11 +159,12 @@ class AccountingStore:
         self._require_organization(organization_id)
         if status not in {DRAFT, POSTED, REVERSED}:
             raise AccountingError(
-                "invalid_entry_status", f"unknown entry status {status!r}"
+                ErrorCode.INVALID_ENTRY_STATUS,
+                f"unknown entry status {status!r}",
             )
         if not lines:
             raise AccountingError(
-                "journal_must_have_lines", "a journal entry must have at least one line"
+                ErrorCode.JOURNAL_EMPTY, "a journal entry must have at least one line"
             )
         for line in lines:
             self.get_account(organization_id, line.account_id)
@@ -172,13 +174,16 @@ class AccountingStore:
                 and entry.document_no == document_no
             ):
                 raise AccountingError(
-                    "document_no_conflict",
+                    ErrorCode.DOCUMENT_NO_CONFLICT,
                     f"document number {document_no} already exists in this organization",
                 )
         try:
             validate_journal(lines)
-        except ValueError as exc:
-            raise AccountingError(str(exc), str(exc)) from exc
+        except ApiError as exc:
+            # The journal rules already speak the error contract; re-wrapping
+            # keeps the same code and details under the store's own exception so
+            # a caller can still catch AccountingError alone.
+            raise AccountingError(exc.code, exc.message, exc.details) from exc
 
         entry_id = next(self._entry_ids)
         stored = JournalEntry(
@@ -209,7 +214,7 @@ class AccountingStore:
         entry = self._entries.get(entry_id)
         if entry is None or entry.organization_id != organization_id:
             raise AccountingError(
-                "journal_not_found",
+                ErrorCode.JOURNAL_NOT_FOUND,
                 f"journal entry {entry_id} does not exist in this organization",
             )
         return entry
@@ -224,7 +229,7 @@ class AccountingStore:
         entry = self.get_entry(organization_id, entry_id)
         if entry.status != DRAFT:
             raise AccountingError(
-                "journal_immutable",
+                ErrorCode.JOURNAL_IMMUTABLE,
                 f"entry {entry_id} is {entry.status} and cannot be posted again",
             )
         return self._store(replace(entry, status=POSTED, posted_at=datetime.now(timezone.utc)))
@@ -366,13 +371,13 @@ class AccountingStore:
                 # The caller needs to know a reversal already exists, because
                 # that is a different mistake from reversing a draft.
                 raise AccountingError(
-                    "entry_already_reversed",
+                    ErrorCode.ENTRY_ALREADY_REVERSED,
                     f"entry {entry_id} has already been reversed by entry "
                     f"{entry.id}",
                 )
         if original.status != POSTED:
             raise AccountingError(
-                "journal_not_reversible",
+                ErrorCode.JOURNAL_NOT_REVERSIBLE,
                 f"only a posted entry can be reversed; entry {entry_id} is "
                 f"{original.status}",
             )
@@ -436,7 +441,7 @@ class AccountingStore:
     def _require_organization(self, organization_id: int) -> None:
         if organization_id not in self._organizations:
             raise AccountingError(
-                "organization_not_found",
+                ErrorCode.ORGANIZATION_NOT_FOUND,
                 f"organization {organization_id} does not exist",
             )
 

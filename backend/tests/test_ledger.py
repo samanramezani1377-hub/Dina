@@ -704,7 +704,7 @@ def test_an_account_id_from_another_organization_is_refused(
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "account_not_found"
+    assert response.json()["error"]["code"] == "account_not_found"
 
 
 def test_an_entry_id_from_another_organization_is_refused(
@@ -720,7 +720,7 @@ def test_an_entry_id_from_another_organization_is_refused(
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "journal_not_found"
+    assert response.json()["error"]["code"] == "journal_not_found"
 
 
 def test_another_tenants_postings_never_reach_the_report(
@@ -759,7 +759,7 @@ def test_a_non_member_cannot_read_another_tenants_ledger(ledger_client, ledger_u
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "not_a_member"
+    assert response.json()["error"]["code"] == "not_a_member"
 
 
 def test_an_unknown_organization_is_reported_as_not_found(ledger_client):
@@ -769,7 +769,7 @@ def test_an_unknown_organization_is_reported_as_not_found(ledger_client):
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "organization_not_found"
+    assert response.json()["error"]["code"] == "organization_not_found"
 
 
 # --------------------------------------------------------------------------
@@ -782,7 +782,7 @@ def test_a_viewer_may_not_read_the_ledger(ledger_client, ledger_url):
     response = ledger_client.get(ledger_url, headers=as_accountant(VIEWER_USER_ID))
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "permission_denied"
+    assert response.json()["error"]["code"] == "permission_denied"
 
 
 @pytest.mark.parametrize("role", ["accountant", "manager", "owner"])
@@ -807,7 +807,7 @@ def test_roles_below_accounting_may_not_read_the_ledger(ledger_url, client_as, r
         test_client.__exit__(None, None, None)
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "permission_denied"
+    assert response.json()["error"]["code"] == "permission_denied"
 
 
 def test_an_unknown_role_is_treated_as_unprivileged(ledger_url, client_as):
@@ -819,7 +819,7 @@ def test_an_unknown_role_is_treated_as_unprivileged(ledger_url, client_as):
         test_client.__exit__(None, None, None)
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "permission_denied"
+    assert response.json()["error"]["code"] == "permission_denied"
 
 
 def test_an_unauthenticated_request_is_refused(ledger_client, ledger_url):
@@ -827,7 +827,7 @@ def test_an_unauthenticated_request_is_refused(ledger_client, ledger_url):
     response = ledger_client.get(ledger_url)
 
     assert response.status_code == 401
-    assert response.json()["detail"] == "not_authenticated"
+    assert response.json()["error"]["code"] == "not_authenticated"
 
 
 def test_a_non_numeric_identity_is_refused(ledger_client, ledger_url):
@@ -835,7 +835,7 @@ def test_a_non_numeric_identity_is_refused(ledger_client, ledger_url):
     response = ledger_client.get(ledger_url, headers={"X-User-Id": "not-a-number"})
 
     assert response.status_code == 401
-    assert response.json()["detail"] == "not_authenticated"
+    assert response.json()["error"]["code"] == "not_authenticated"
 
 
 def test_a_user_with_no_memberships_is_refused(ledger_client, ledger_url):
@@ -843,4 +843,4 @@ def test_a_user_with_no_memberships_is_refused(ledger_client, ledger_url):
     response = ledger_client.get(ledger_url, headers=as_accountant(STRANGER_USER_ID))
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "not_a_member"
+    assert response.json()["error"]["code"] == "not_a_member"

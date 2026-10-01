@@ -30,7 +30,15 @@ def test_unbalanced(client) -> None:
     r = client.post(
         "/api/v1/accounting/journals/validate", json=UNBALANCED_JOURNAL
     )
-    assert r.status_code == 422 and r.json()["detail"] == "journal_not_balanced"
+    # Migrated to the error envelope: the code is the contract, and the totals
+    # that failed to agree are what a client needs to fix the journal.
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "journal_not_balanced"
+    assert r.json()["error"]["details"] == {
+        "debit_total": "100",
+        "credit_total": "90",
+        "difference": "10",
+    }
 
 
 def test_validator_runs_under_a_booted_lifespan(client) -> None:
