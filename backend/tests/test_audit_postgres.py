@@ -271,19 +271,34 @@ def test_the_query_helper_still_refuses_a_cross_tenant_read(
 def test_the_tenant_filter_is_a_bound_parameter_not_string_interpolation(
     store: PostgresAuditStore, organizations: dict[str, int], dsn: str
 ):
-    """The filter must not be built by pasting the tenant id into SQL."""
+    """The tenant id must travel as data, never as SQL text.
+
+    The payload below is a classic injection attempt. Because
+    ``organization_id`` is BIGINT, a real server does not merely fail to match
+    it -- it refuses to convert it at all, raising
+    ``InvalidTextRepresentation``. That is the stronger of the two outcomes and
+    the one worth pinning: the string arrived as a *value* to be type-checked,
+    which is only true if it was bound as a parameter. Had it been interpolated
+    into the SQL text, the server would have parsed it as two statements and
+    dropped the table.
+
+    So the assertions are that the value is rejected as data, and that the
+    table is still there afterwards.
+    """
     org = organizations["primary"]
     store.append(_entry(org))
-    # Sent as data, this matches no rows. Interpolated into the SQL it would
-    # have run as a second statement.
+
+    with pytest.raises(psycopg.errors.InvalidTextRepresentation):
+        with psycopg.connect(dsn) as conn:
+            conn.execute(
+                "SELECT count(*) FROM audit_logs WHERE organization_id = %s",
+                (f"{org}; DROP TABLE audit_logs",),
+            )
+
+    # The table survived and the row is still readable: the attempt was treated
+    # as a string to type-check, never as SQL to run.
     with psycopg.connect(dsn) as conn:
-        rows = conn.execute(
-            "SELECT count(*) FROM audit_logs WHERE organization_id = %s",
-            (f"{org}; DROP TABLE audit_logs",),
-        ).fetchall()
-    assert rows[0][0] == 0
-    # The table is still there, which is the actual assertion: the injection
-    # attempt was treated as a string to match, never as SQL to run.
+        conn.execute("SELECT count(*) FROM audit_logs")
     assert len(store.list_for_organization(org)) == 1
 
 
