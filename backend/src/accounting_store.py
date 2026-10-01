@@ -245,9 +245,16 @@ class AccountingStore:
         :data:`src.models.LEDGER_STATUSES`), so the pair nets to zero and a
         reader can still see what happened.
 
+        The mirror is written *before* the original's status flips, so a call
+        rejected by :meth:`add_entry` leaves the original posted and still
+        reversible. Flipping first would mark an entry ``reversed`` with no
+        reversing entry behind it, and the retry would then fail as
+        ``journal_not_reversible`` — a state the caller cannot get out of.
+
         Raises:
             AccountingError: ``journal_not_reversible`` when the entry is not
-                posted, and ``entry_already_reversed`` when one exists already.
+                posted, ``entry_already_reversed`` when one exists already, or
+                any code from :meth:`add_entry`.
         """
         original = self.get_entry(organization_id, entry_id)
         for entry in self._entries.values():
@@ -271,8 +278,7 @@ class AccountingStore:
                 f"only a posted entry can be reversed; entry {entry_id} is "
                 f"{original.status}",
             )
-        self._store(replace(original, status=REVERSED))
-        return self.add_entry(
+        reversing = self.add_entry(
             organization_id=organization_id,
             document_no=document_no,
             description=description or f"reversal of {original.document_no}",
@@ -288,6 +294,10 @@ class AccountingStore:
             status=POSTED,
             reversal_of_entry_id=original.id,
         )
+        # Only now that the mirror exists does the original become `reversed`,
+        # so the two facts cannot disagree.
+        self._store(replace(original, status=REVERSED))
+        return reversing
 
     # -- ledger reads -----------------------------------------------------
 

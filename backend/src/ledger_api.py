@@ -65,6 +65,12 @@ def require_accounting_caller(
     except AuthenticationError as exc:
         if exc.code == "organization_not_found":
             raise HTTPException(404, detail=exc.code) from exc
+        if exc.code == "not_a_member":
+            # The caller is authenticated — they proved who they are. 401 would
+            # tell them to log in again, which cannot help: what is missing is a
+            # membership, not an identity. 403 is also what the contract above
+            # documents, and the error-envelope bead will inherit this code.
+            raise HTTPException(403, detail=exc.code) from exc
         raise HTTPException(401, detail=exc.code) from exc
     if not has_role(caller.role, ACCOUNTING_ROLE):
         raise HTTPException(403, detail="permission_denied")

@@ -235,6 +235,53 @@ def test_an_entry_cannot_be_reversed_twice(
     assert len(account_report(get_ledger(ledger_client, ledger_url), cash)["movements"]) == 2
 
 
+def test_a_reversal_rejected_by_the_store_leaves_the_original_posted(
+    ledger_client, accounting_store, ledger_url
+):
+    """A failed reversal must not half-apply.
+
+    `document_no` collides with an existing entry, so `add_entry` refuses the
+    mirror. If the original had already been flipped to `reversed` first, it
+    would be left marked reversed with nothing behind it — and the retry would
+    then fail as `journal_not_reversible`, a state the caller cannot get out of.
+    """
+    cash = account_id(accounting_store, CASH)
+    revenue = account_id(accounting_store, REVENUE)
+    original_id = post_entry(
+        accounting_store, "JV-1", DAY_ONE, [line(cash, debit="75.00"), line(revenue, credit="75.00")]
+    )
+    post_entry(
+        accounting_store, "JV-TAKEN", DAY_ONE, [line(cash, debit="5.00"), line(revenue, credit="5.00")]
+    )
+
+    with pytest.raises(Exception) as raised:
+        accounting_store.reverse_entry(
+            organization_id=ORGANIZATION_ID,
+            entry_id=original_id,
+            document_no="JV-TAKEN",  # already in use
+            entry_date=DAY_TWO,
+        )
+
+    assert getattr(raised.value, "code", "") == "document_no_conflict"
+    # Still posted, still reversible, and no half-written mirror in the ledger.
+    assert accounting_store.get_entry(ORGANIZATION_ID, original_id).status == "posted"
+    assert [m["entry_id"] for m in account_report(get_ledger(ledger_client, ledger_url), cash)["movements"]] == [
+        original_id,
+        original_id + 1,
+    ]
+
+    # The legitimate retry now succeeds, which is the point of not corrupting the
+    # original: `journal_not_reversible` would be raised instead.
+    reversing = accounting_store.reverse_entry(
+        organization_id=ORGANIZATION_ID,
+        entry_id=original_id,
+        document_no="JV-1-REV",
+        entry_date=DAY_TWO,
+    )
+    assert reversing.reversal_of_entry_id == original_id
+    assert accounting_store.get_entry(ORGANIZATION_ID, original_id).status == "reversed"
+
+
 # --------------------------------------------------------------------------
 # Running balance ordering
 # --------------------------------------------------------------------------
@@ -448,6 +495,86 @@ def test_date_range_reports_opening_debit_credit_and_closing_balances(
     assert [m["document_no"] for m in report["movements"]] == ["JV-IN"]
 
 
+def test_a_backdated_entry_posted_after_the_period_does_not_reset_the_running_balance(
+    ledger_client, accounting_store, ledger_url
+):
+    """A late-posted backdated journal is history, not a reset of the period.
+
+    `JV-LATE` (in-period) is posted first and therefore has the lower id;
+    `JV-BACKDATED` is posted afterwards for a date before the period opens, so it
+    has the *higher* id. Lines are walked in `(entry id, line no)` order but
+    pre-period-ness is a property of the date, so the backdated line is reached
+    after the period line. If the opening balance is folded in as the walk goes,
+    the running balance is overwritten and the period's movement is lost.
+
+    The three numbers below have to agree with each other: opening + period
+    movement = closing, and the last running balance = closing.
+    """
+    cash = account_id(accounting_store, CASH)
+    revenue = account_id(accounting_store, REVENUE)
+    post_entry(
+        accounting_store, "JV-LATE", DAY_TWO, [line(cash, debit="100.00"), line(revenue, credit="100.00")]
+    )
+    post_entry(
+        accounting_store,
+        "JV-BACKDATED",
+        DAY_BEFORE,
+        [line(cash, debit="50.00"), line(revenue, credit="50.00")],
+    )
+
+    report = account_report(
+        get_ledger(
+            ledger_client,
+            ledger_url,
+            date_from=DAY_ONE.isoformat(),
+            date_to=DAY_TWO.isoformat(),
+        ),
+        cash,
+    )
+
+    assert report["opening_balance"] == "50.00"
+    assert report["period_debit_total"] == "100.00"
+    assert report["closing_balance"] == "150.00"
+    # The period's single movement carries the opening figure too, because it is
+    # where the running balance is seeded.
+    assert [m["document_no"] for m in report["movements"]] == ["JV-LATE"]
+    assert report["movements"][-1]["running_balance"] == "150.00"
+
+
+def test_a_backdated_entry_and_a_later_one_still_step_in_entry_id_order(
+    ledger_client, accounting_store, ledger_url
+):
+    """Canonical order is `(entry id, line no)` even when the dates disagree."""
+    cash = account_id(accounting_store, CASH)
+    revenue = account_id(accounting_store, REVENUE)
+    first = post_entry(
+        accounting_store, "JV-1", DAY_TWO, [line(cash, debit="10.00"), line(revenue, credit="10.00")]
+    )
+    post_entry(
+        accounting_store, "JV-2", DAY_TWO, [line(cash, debit="20.00"), line(revenue, credit="20.00")]
+    )
+    post_entry(
+        accounting_store, "JV-BACKDATED", DAY_BEFORE, [line(cash, debit="5.00"), line(revenue, credit="5.00")]
+    )
+
+    report = account_report(
+        get_ledger(
+            ledger_client,
+            ledger_url,
+            date_from=DAY_ONE.isoformat(),
+            date_to=DAY_TWO.isoformat(),
+        ),
+        cash,
+    )
+
+    # Id order, not date order: the backdated entry is the opening figure even
+    # though it was posted last, and it is not stepped as a movement.
+    assert report["opening_balance"] == "5.00"
+    assert [m["entry_id"] for m in report["movements"]] == [first, first + 1]
+    assert [m["running_balance"] for m in report["movements"]] == ["15.00", "35.00"]
+    assert report["closing_balance"] == "35.00"
+
+
 def test_entries_after_the_period_are_excluded(ledger_client, accounting_store, ledger_url):
     """A period report must not include the future."""
     cash = account_id(accounting_store, CASH)
@@ -620,13 +747,18 @@ def test_another_tenants_postings_never_reach_the_report(
 
 
 def test_a_non_member_cannot_read_another_tenants_ledger(ledger_client, ledger_url):
-    """An accountant of org 2 is still a stranger to org 1."""
+    """An accountant of org 2 is still a stranger to org 1.
+
+    403, not 401: the identity was accepted, and what is missing is a
+    membership. Telling a logged-in user to log in again is the wrong
+    instruction.
+    """
     response = ledger_client.get(
         f"/api/v1/organizations/{ORGANIZATION_ID}/ledger",
         headers=as_accountant(OUTSIDER_USER_ID),
     )
 
-    assert response.status_code == 401
+    assert response.status_code == 403
     assert response.json()["detail"] == "not_a_member"
 
 
@@ -710,5 +842,5 @@ def test_a_user_with_no_memberships_is_refused(ledger_client, ledger_url):
     """Being a real user is not the same as being a member of this tenant."""
     response = ledger_client.get(ledger_url, headers=as_accountant(STRANGER_USER_ID))
 
-    assert response.status_code == 401
+    assert response.status_code == 403
     assert response.json()["detail"] == "not_a_member"

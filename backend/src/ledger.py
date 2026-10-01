@@ -69,6 +69,12 @@ class LedgerFilter:
             return False
         return True
 
+    def is_before_period(self, entry: JournalEntry) -> bool:
+        """Whether ``entry`` is history that becomes the opening balance."""
+        if self.date_from is None:
+            return False
+        return entry.entry_date < self.date_from
+
     def in_period(self, entry: JournalEntry) -> bool:
         if self.date_from is not None and entry.entry_date < self.date_from:
             return False
@@ -158,39 +164,48 @@ def _account_ledger(
         if line.account_id == account.id
     ]
 
+    # The opening balance is accumulated in its own pass over the lines dated
+    # strictly before `date_from`. It has to be a separate pass: the lines are
+    # ordered by `(entry id, line no)` but pre-period-ness is a property of the
+    # date, and the two orderings disagree the moment anything is backdated. A
+    # journal posted late for an earlier date gets the higher id and would
+    # otherwise be seen *after* the period lines it precedes, resetting the
+    # running balance to the opening figure and discarding the period's own
+    # movement.
     opening = money(0)
     period_debit = money(0)
     period_credit = money(0)
     movements: list[LedgerMovement] = []
+
+    for entry, line in lines:
+        if ledger_filter.is_before_period(entry):
+            opening = opening + _movement_amount(line, sign)
+
     # The running balance starts from whatever the account carried into the
     # period, so the first period movement is seeded with it rather than zero.
+    # Lines dated after `date_to` are not in the period and so are not stepped,
+    # which is what a period report is supposed to do with the future.
     running = opening
 
     for entry, line in lines:
-        if ledger_filter.in_period(entry):
-            running = running + _movement_amount(line, sign)
-            period_debit = period_debit + line.debit
-            period_credit = period_credit + line.credit
-            movements.append(
-                LedgerMovement(
-                    entry_id=entry.id,
-                    line_no=line.line_no,
-                    account_id=line.account_id,
-                    document_no=entry.document_no,
-                    description=entry.description,
-                    entry_date=entry.entry_date,
-                    debit=line.debit,
-                    credit=line.credit,
-                    running_balance=running,
-                )
+        if not ledger_filter.in_period(entry):
+            continue
+        running = running + _movement_amount(line, sign)
+        period_debit = period_debit + line.debit
+        period_credit = period_credit + line.credit
+        movements.append(
+            LedgerMovement(
+                entry_id=entry.id,
+                line_no=line.line_no,
+                account_id=line.account_id,
+                document_no=entry.document_no,
+                description=entry.description,
+                entry_date=entry.entry_date,
+                debit=line.debit,
+                credit=line.credit,
+                running_balance=running,
             )
-        elif ledger_filter.date_from is not None and entry.entry_date < ledger_filter.date_from:
-            # Strictly before the period opens: history that becomes the
-            # opening balance, not movement within the period. Lines dated
-            # after `date_to` land in neither branch and are ignored, which is
-            # what a period report is supposed to do with the future.
-            opening = opening + _movement_amount(line, sign)
-            running = opening
+        )
 
     return AccountLedger(
         account=account,
