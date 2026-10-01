@@ -114,7 +114,7 @@ class BusinessStore:
             inv=conn.execute("UPDATE invoices SET paid=%s,status=%s WHERE id=%s AND organization_id=%s RETURNING *",(paid,status,invoice_id,org)).fetchone()
         return p,inv
     def subscription(self, org: int):
-        if self._memory: return self._subscriptions[-1] if self._subscriptions else None
+        if self._memory: return next((x for x in reversed(self._subscriptions) if x["organization_id"] == org), None)
         with self._connect() as conn: return conn.execute("SELECT * FROM subscriptions WHERE organization_id=%s ORDER BY id DESC LIMIT 1",(org,)).fetchone()
     def upsert_subscription(self, org: int, plan: str, status: str, starts_at: Any, ends_at: Any):
         if self._memory:
