@@ -12,6 +12,42 @@ jobs:
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
+    # The audit trail is the one component with a real database behind it, and
+    # its append-only guarantee is enforced by the database itself (a trigger
+    # plus REVOKEs), not by application code. That guarantee cannot be checked
+    # against a fake connection: a FakeConn cannot reject an UPDATE. So this job
+    # runs a real PostgreSQL service and the integration tests talk to it.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dina
+          POSTGRES_PASSWORD: dina
+          POSTGRES_DB: dina_test
+        ports:
+          - 5432:5432
+        # --healthcheck, not a fixed sleep: the steps below must not race the
+        # server's startup. Without it the suite intermittently fails to connect
+        # on a cold runner, which is a flaky red that hides real failures.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Credentials for the throwaway CI database above. These are not secrets:
+      # the database exists only for the lifetime of this job on an ephemeral
+      # runner, and nothing outside this workflow can reach it.
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: '5432'
+      POSTGRES_USER: dina
+      POSTGRES_PASSWORD: dina
+      POSTGRES_DB: dina_test
+      # Read by backend/tests/test_audit_postgres.py, which is the whole reason
+      # the service container exists. An integration test that silently skipped
+      # here would report the audit trail as covered while testing nothing, so
+      # the test fails instead of skipping when this is absent.
+      DATABASE_URL: postgresql://dina:dina@localhost:5432/dina_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,11 +66,35 @@ jobs:
       # With the fixture, booting the app in a test genuinely exercises the
       # fail-fast startup gate in src/main.py. No real secret is ever set or
       # committed.
+      #
+      # Applied in filename order, which is what makes 002_audit_logs.sql able
+      # to attach its foreign keys conditionally: it checks for the tables the
+      # earlier migrations create.
+      - name: Apply database migrations
+        run: |
+          set -euo pipefail
+          for f in database/migrations/*.sql; do
+            echo "Applying $f"
+            psql -v ON_ERROR_STOP=1 \
+              --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \
+              --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+              --file "$f"
+          done
+      - name: Verify the audit table exists
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 \
+            --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \
+            --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+            --command "SELECT count(*) FROM audit_logs"
       # backend/tests is the whole backend suite, including the accounting
-      # domain matrix in test_accounting_matrix.py. The top-level tests/
-      # directory held exactly one file, which asserted that two hardcoded lists
-      # of Decimal summed equally -- it exercised sum(), not this application --
-      # and was removed rather than left running alongside the real tests.
+      # domain matrix in test_accounting_matrix.py and the real-PostgreSQL
+      # audit integration tests. The top-level tests/ directory held exactly one
+      # file, which asserted that two hardcoded lists of Decimal summed equally
+      # -- it exercised sum(), not this application -- and was removed rather
+      # than left running alongside the real tests.
+      #
+      # No -m marker and no --ignore: everything in backend/tests runs here.
       - run: pytest -q backend/tests
 
   # Analyze, test and Android build all run on Linux. The Windows desktop build
