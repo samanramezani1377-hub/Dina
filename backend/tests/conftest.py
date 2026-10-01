@@ -18,6 +18,14 @@ import pytest
 
 from src.config import reset_settings_cache
 
+#: Fixtures for the ledger tests. Registered as a plugin rather than left as a
+#: plain import in the test module so ``client``, ``accounting_store`` and
+#: ``memberships`` resolve the same way in every ledger test without each one
+#: having to import them. The module is separate from this file because the
+#: session-scoped settings gate below is suite-wide, while the ledger fixtures
+#: are function-scoped and must be rebuilt for every test.
+pytest_plugins = ["ledger_fixtures"]
+
 
 @pytest.fixture(scope="session", autouse=True)
 def test_environment():
