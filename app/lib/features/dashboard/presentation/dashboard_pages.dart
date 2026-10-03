@@ -73,6 +73,7 @@ class _AccountingWorkspaceState extends State<AccountingWorkspace> {
       'journal-entry' => JournalsPage(org: org, onChanged: reload),
       'ledger' => ReportPage(org: org, path: 'ledger', title: 'دفتر کل'),
       'trial-balance' => ReportPage(org: org, path: 'trial-balance', title: 'تراز آزمایشی'),
+      'reports' => ReportsPage(org: org),
       'customers' => CustomersPage(org: org),
       'invoices' => InvoicesPage(org: org, onChanged: reload),
       'payments' => PaymentsPage(org: org, onChanged: reload),
@@ -269,6 +270,36 @@ class _PaymentsPageState extends State<PaymentsPage> {
       FilledButton(onPressed: pay, child: const Text('ثبت پرداخت')),
     ]))),
   ]);
+}
+
+
+class ReportsPage extends StatelessWidget {
+  const ReportsPage({required this.org, super.key});
+  final String org;
+  @override Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(20),
+    children: [
+      Text('گزارش‌های مالی', style: Theme.of(context).textTheme.headlineSmall),
+      const SizedBox(height: 6),
+      const Text('گزارش‌ها از داده‌های ثبت‌شده سرور ساخته می‌شوند و مقدار مالی قابل ویرایش در کلاینت ندارند.'),
+      const SizedBox(height: 16),
+      Wrap(spacing: 12, runSpacing: 12, children: [
+        _ReportAction(title: 'دفتر کل', icon: Icons.menu_book_outlined, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ReportPage(org: org, path: 'ledger', title: 'دفتر کل')))),
+        _ReportAction(title: 'تراز آزمایشی', icon: Icons.balance_outlined, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ReportPage(org: org, path: 'trial-balance', title: 'تراز آزمایشی')))),
+      ]),
+    ],
+  );
+}
+class _ReportAction extends StatelessWidget {
+  const _ReportAction({required this.title, required this.icon, required this.onTap});
+  final String title; final IconData icon; final VoidCallback onTap;
+  @override Widget build(BuildContext context) => SizedBox(width: 260, child: Card(
+    child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12), child: Padding(
+      padding: const EdgeInsets.all(18), child: Row(children: [
+        Icon(icon, size: 30), const SizedBox(width: 14), Expanded(child: Text(title, style: Theme.of(context).textTheme.titleMedium)), const Icon(Icons.arrow_forward_ios, size: 16),
+      ]),
+    )),
+  ));
 }
 
 class SettingsPage extends StatelessWidget {
