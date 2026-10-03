@@ -11,7 +11,7 @@ class ShellDestination {
     required this.label,
     required this.icon,
     required this.description,
-    this.implemented = false,
+    this.implemented = true,
     this.primary = false,
   });
 
