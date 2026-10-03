@@ -3,7 +3,7 @@ import '../../../app/app_scope.dart';
 import '../../../app/api/api_client.dart';
 
 String valueOf(Object? value) => value?.toString() ?? '';
-String pathFor(String org, String tail) => '/organizations/${org}/${tail}';
+String pathFor(String org, String tail) => '/organizations/$org/$tail';
 
 class DashboardHomePage extends StatefulWidget {
   const DashboardHomePage({required this.organizationName, required this.userLabel, super.key});
@@ -26,7 +26,7 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
         final totals = data['totals'] is JsonMap ? data['totals']! as JsonMap : <String,Object?>{};
         return ListView(padding: const EdgeInsets.all(20), children: [
           Text(widget.organizationName, style: Theme.of(context).textTheme.headlineSmall),
-          Text('خوش آمدید، ${widget.userLabel}'),
+          Text('خوش آمدید، $widget.userLabel'),
           const SizedBox(height: 20),
           Wrap(spacing: 12, runSpacing: 12, children: [
             MetricCard(title: 'جمع بدهکار', value: valueOf(totals['debit_total'])),
