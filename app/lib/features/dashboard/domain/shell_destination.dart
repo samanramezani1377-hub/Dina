@@ -38,7 +38,7 @@ abstract final class ShellDestinations {
     label: 'داشبورد',
     icon: Icons.dashboard_outlined,
     description: 'خلاصه وضعیت مالی سازمان انتخاب‌شده.',
-    implemented: true,
+    
     primary: true,
   );
 
