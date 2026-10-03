@@ -29,6 +29,7 @@ from .config import get_settings
 from .errors import ApiError, register_error_handlers
 from .error_log_api import router as error_log_router
 from .management_api import router as management_router
+from .business_modules_api import router as business_modules_router
 from .ledger_api import router as ledger_router
 from .operations_api import router as operations_router
 from .models import JournalLine
@@ -70,6 +71,7 @@ app.include_router(auth_router)
 app.include_router(operations_router)
 app.include_router(error_log_router)
 app.include_router(management_router)
+app.include_router(business_modules_router)
 # Handlers are dispatched by exception type at request time, so this can sit
 # after the routers without changing which failure goes where.
 register_error_handlers(app)
