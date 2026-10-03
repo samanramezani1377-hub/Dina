@@ -132,3 +132,54 @@ def check_status(organization_id:int,check_id:int,status:str,request:Request,c:C
         r=cn.execute("UPDATE checks SET status=%s WHERE id=%s AND organization_id=%s RETURNING *",(status,check_id,organization_id)).fetchone()
     if not r: raise ApiError(ErrorCode.NOT_FOUND,"check not found")
     return _j(dict(r))
+
+class DocumentLineIn(BaseModel):
+    product_id:int|None=None; description:str=Field(min_length=1,max_length=500)
+    quantity:Decimal=Field(gt=0); unit_price:Decimal=Field(ge=0)
+    discount:Decimal=Field(default=0,ge=0); tax:Decimal=Field(default=0,ge=0)
+class SalesDocumentIn(BaseModel):
+    customer_id:int; invoice_no:str=Field(min_length=1,max_length=100); issue_date:date
+    due_date:date|None=None; lines:list[DocumentLineIn]=Field(min_length=1)
+class PurchaseDocumentIn(BaseModel):
+    supplier_id:int; invoice_no:str=Field(min_length=1,max_length=100); issue_date:date
+    due_date:date|None=None; lines:list[DocumentLineIn]=Field(min_length=1)
+
+def _doc_totals(lines):
+    subtotal=sum((x.quantity*x.unit_price for x in lines),Decimal("0"))
+    discount=sum((x.discount for x in lines),Decimal("0"))
+    tax=sum((x.tax for x in lines),Decimal("0"))
+    return subtotal,discount,tax,subtotal-discount+tax
+
+@router.post("/{organization_id}/sales",status_code=201)
+def create_sale(organization_id:int,p:SalesDocumentIn,request:Request,c:Caller=Depends(write_caller)):
+    subtotal,discount,tax,total=_doc_totals(p.lines)
+    with connect(request) as cn:
+        customer=cn.execute("SELECT 1 FROM customers WHERE id=%s AND organization_id=%s",(p.customer_id,organization_id)).fetchone()
+        if not customer: raise ApiError(ErrorCode.NOT_FOUND,"customer not found")
+        r=cn.execute("INSERT INTO sales(organization_id,customer_id,invoice_no,issue_date,due_date,subtotal,discount,tax,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.customer_id,p.invoice_no,p.issue_date,p.due_date,subtotal,discount,tax,total)).fetchone()
+        for x in p.lines:
+            if x.product_id:
+                ok=cn.execute("SELECT 1 FROM products WHERE id=%s AND organization_id=%s",(x.product_id,organization_id)).fetchone()
+                if not ok: raise ApiError(ErrorCode.NOT_FOUND,"product not found")
+            cn.execute("INSERT INTO sale_lines(sale_id,product_id,description,quantity,unit_price,discount,tax) VALUES(%s,%s,%s,%s,%s,%s,%s)",(r["id"],x.product_id,x.description,x.quantity,x.unit_price,x.discount,x.tax))
+    return _j(dict(r))
+@router.get("/{organization_id}/sales")
+def sales(organization_id:int,request:Request,c:Caller=Depends(caller)):
+    return {"items":_j(q(request,"SELECT * FROM sales WHERE organization_id=%s ORDER BY issue_date DESC,id DESC",(organization_id,)))}
+
+@router.post("/{organization_id}/purchases",status_code=201)
+def create_purchase(organization_id:int,p:PurchaseDocumentIn,request:Request,c:Caller=Depends(write_caller)):
+    subtotal,discount,tax,total=_doc_totals(p.lines)
+    with connect(request) as cn:
+        supplier=cn.execute("SELECT 1 FROM suppliers WHERE id=%s AND organization_id=%s",(p.supplier_id,organization_id)).fetchone()
+        if not supplier: raise ApiError(ErrorCode.NOT_FOUND,"supplier not found")
+        r=cn.execute("INSERT INTO purchases(organization_id,supplier_id,invoice_no,issue_date,due_date,subtotal,discount,tax,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.supplier_id,p.invoice_no,p.issue_date,p.due_date,subtotal,discount,tax,total)).fetchone()
+        for x in p.lines:
+            if x.product_id:
+                ok=cn.execute("SELECT 1 FROM products WHERE id=%s AND organization_id=%s",(x.product_id,organization_id)).fetchone()
+                if not ok: raise ApiError(ErrorCode.NOT_FOUND,"product not found")
+            cn.execute("INSERT INTO purchase_lines(purchase_id,product_id,description,quantity,unit_price,discount,tax) VALUES(%s,%s,%s,%s,%s,%s,%s)",(r["id"],x.product_id,x.description,x.quantity,x.unit_price,x.discount,x.tax))
+    return _j(dict(r))
+@router.get("/{organization_id}/purchases")
+def purchases(organization_id:int,request:Request,c:Caller=Depends(caller)):
+    return {"items":_j(q(request,"SELECT * FROM purchases WHERE organization_id=%s ORDER BY issue_date DESC,id DESC",(organization_id,)))}
