@@ -50,7 +50,12 @@ FakeTransport authenticatedTransport({
   List<String> organizations = const <String>['شرکت الف', 'شرکت ب'],
 }) => (FakeTransport()
       ..onJson('GET', '/api/v1/auth/me', userJson()))
-    ..onJson('GET', '/api/v1/organizations', organizationsJson(organizations))\n    ..onJson('GET', '/api/v1/organizations/org-1/trial-balance', <String,Object?>{\n      'organization_id': 1, 'is_balanced': true,\n      'totals': <String,Object?>{'debit_total':'0.00','credit_total':'0.00','difference':'0.00'},\n      'accounts': <Object?>[],\n    });
+    ..onJson('GET', '/api/v1/organizations', organizationsJson(organizations))
+    ..onJson('GET', '/api/v1/organizations/org-1/trial-balance', <String,Object?>{
+      'organization_id': 1, 'is_balanced': true,
+      'totals': <String,Object?>{'debit_total':'0.00','credit_total':'0.00','difference':'0.00'},
+      'accounts': <Object?>[],
+    });
 
 extension PumpDina on WidgetTester {
   /// Builds the real application over fakes and settles the cold start.
