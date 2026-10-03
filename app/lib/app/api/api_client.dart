@@ -20,7 +20,13 @@ class ApiClient {
   Future<JsonMap?> patch(String path,{JsonMap? body})=>_send('PATCH',path,body:body);
   Future<JsonMap?> delete(String path)=>_send('DELETE',path);
 
-  String _withQuery(String path,Map<String,String>? query) {\n    if(query==null||query.isEmpty)return path;\n    final uri=Uri.parse(path);\n    return uri.replace(queryParameters:{...uri.queryParameters,...query}).toString();\n  }\n\n  Future<JsonMap?> _send(String method,String path,{JsonMap? body,Map<String,String>? extraHeaders}) async {
+  String _withQuery(String path,Map<String,String>? query) {
+    if(query==null||query.isEmpty)return path;
+    final uri=Uri.parse(path);
+    return uri.replace(queryParameters:{...uri.queryParameters,...query}).toString();
+  }
+
+  Future<JsonMap?> _send(String method,String path,{JsonMap? body,Map<String,String>? extraHeaders}) async {
     final headers=<String,String>{'accept':'application/json'};
     final token=_tokenProvider();
     if(token!=null&&token.isNotEmpty)headers['authorization']='Bearer $token';
