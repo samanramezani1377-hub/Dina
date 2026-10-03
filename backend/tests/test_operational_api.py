@@ -18,6 +18,7 @@ def test_operational_api_covers_accounting_and_saas():
 
         user_id = 101
         org = tenant.create_organization("Dina Test", user_id)
+        accounting.add_organization(org.id)
         token = issue_access_token(user_id)
         headers = {"Authorization": f"Bearer {token}"}
 
