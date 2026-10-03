@@ -192,11 +192,11 @@ class PostgresStore:
                         raise AccountingError(ErrorCode.ACCOUNT_NOT_FOUND, "account does not exist in this organization")
                 row = conn.execute(
                     """INSERT INTO journal_entries
-                       (organization_id,document_no,description,status,posted_at,reversal_of_entry_id)
-                       VALUES (%s,%s,%s,%s,%s,%s)
+                       (organization_id,document_no,description,status,entry_date,posted_at,reversal_of_entry_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)
                        RETURNING id,organization_id,document_no,description,status,created_at,
                                  posted_at,reversal_of_entry_id""",
-                    (organization_id, document_no, description, status,
+                    (organization_id, document_no, description, status, entry_date,
                      datetime.now(timezone.utc) if status != DRAFT else None, reversal_of_entry_id),
                 ).fetchone()
                 entry_id = int(row["id"])
