@@ -138,17 +138,16 @@ class _DestinationBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final AppScope scope = AppScope.of(context);
-    if (destination.implemented) {
+    if (destination.id == 'dashboard') {
       return DashboardHomePage(
         key: const ValueKey<String>('dashboard-home'),
         organizationName: organizationNameFor(scope),
         userLabel: scope.authController.user?.label ?? '',
       );
     }
-    return NotImplementedPlaceholder(
-      key: ValueKey<String>('placeholder-${destination.id}'),
-      title: destination.label,
-      description: destination.description,
+    return AccountingWorkspace(
+      key: ValueKey<String>('workspace-${destination.id}'),
+      destinationId: destination.id,
     );
   }
 }
