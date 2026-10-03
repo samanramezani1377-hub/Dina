@@ -45,6 +45,7 @@ class StockIn(BaseModel):
     warehouse_id:int; product_id:int; quantity:Decimal; movement_type:str; reference:str|None=None; movement_date:date
 class CashIn(BaseModel):
     name:str=Field(min_length=1,max_length=200); kind:str; account_number:str|None=None; opening_balance:Decimal=0
+    account_id:int|None=None
 class CashTxIn(BaseModel):
     cash_account_id:int; amount:Decimal=Field(gt=0); direction:str; description:str=""; reference:str|None=None; transaction_date:date
 class CheckIn(BaseModel):
@@ -107,7 +108,7 @@ def stock_report(organization_id:int,request:Request,c:Caller=Depends(caller)):
 def cash_account(organization_id:int,p:CashIn,request:Request,c:Caller=Depends(write_caller)):
     if p.kind not in {"cash","bank"}: raise ApiError(ErrorCode.VALIDATION_ERROR,"invalid cash account kind")
     with __import__("psycopg").connect(db(request),row_factory=__import__("psycopg").rows.dict_row) as cn:
-        r=cn.execute("INSERT INTO cash_accounts(organization_id,name,kind,account_number,opening_balance) VALUES(%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.name,p.kind,p.account_number,p.opening_balance)).fetchone()
+        r=cn.execute("INSERT INTO cash_accounts(organization_id,name,kind,account_number,opening_balance,account_id) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.name,p.kind,p.account_number,p.opening_balance,p.account_id)).fetchone()
     return _j(dict(r))
 @router.get("/{organization_id}/cash-accounts")
 def cash_accounts(organization_id:int,request:Request,c:Caller=Depends(caller)): return {"items":_j(q(request,"SELECT * FROM cash_accounts WHERE organization_id=%s ORDER BY name",(organization_id,)))}
@@ -119,6 +120,18 @@ def cash_tx(organization_id:int,p:CashTxIn,request:Request,c:Caller=Depends(writ
         if not ok: raise ApiError(ErrorCode.NOT_FOUND,"cash account not found")
         r=cn.execute("INSERT INTO cash_transactions(organization_id,cash_account_id,amount,direction,description,reference,transaction_date) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.cash_account_id,p.amount,p.direction,p.description,p.reference,p.transaction_date)).fetchone()
     return _j(dict(r))
+@router.get("/{organization_id}/cash-accounts/{cash_account_id}/balance")
+def cash_balance(organization_id:int,cash_account_id:int,request:Request,c:Caller=Depends(caller)):
+    with connect(request) as cn:
+        row=cn.execute("""SELECT ca.id,ca.name,ca.kind,ca.opening_balance,
+                         ca.opening_balance + COALESCE(SUM(CASE WHEN ct.direction='in' THEN ct.amount ELSE -ct.amount END),0) AS balance
+                         FROM cash_accounts ca LEFT JOIN cash_transactions ct
+                         ON ct.cash_account_id=ca.id AND ct.organization_id=ca.organization_id
+                         WHERE ca.id=%s AND ca.organization_id=%s
+                         GROUP BY ca.id,ca.name,ca.kind,ca.opening_balance""",(cash_account_id,organization_id)).fetchone()
+    if not row: raise ApiError(ErrorCode.NOT_FOUND,"cash account not found")
+    return _j(dict(row))
+
 @router.get("/{organization_id}/cash-transactions")
 def cash_transactions(organization_id:int,request:Request,c:Caller=Depends(caller)): return {"items":_j(q(request,"SELECT * FROM cash_transactions WHERE organization_id=%s ORDER BY transaction_date,id",(organization_id,)))}
 
