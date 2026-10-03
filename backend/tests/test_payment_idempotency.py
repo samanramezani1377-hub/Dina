@@ -1,6 +1,6 @@
 from decimal import Decimal
 from datetime import date
-from backend.src.business_store import BusinessStore
+from src.business_store import BusinessStore
 
 def test_payment_idempotency_returns_original_payment():
     store=BusinessStore()
