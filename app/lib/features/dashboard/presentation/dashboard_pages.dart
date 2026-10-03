@@ -243,7 +243,7 @@ class _PaymentsPageState extends State<PaymentsPage> {
     final invoiceId = int.tryParse(invoice.text.trim());
     if (invoiceId == null) { showError(context, 'شناسه فاکتور معتبر نیست.'); return; }
     try {
-      await AppScope.of(context).api.post(pathFor(widget.org, 'invoices/' + invoiceId.toString() + '/payments'), body: {
+      await AppScope.of(context).api.post(pathFor(widget.org, 'invoices/$invoiceId/payments'), body: {
         'amount': amount.text.trim(), 'method': method.text.trim(), 'reference': reference.text.trim().isEmpty ? null : reference.text.trim(),
       }, extraHeaders: {'Idempotency-Key': 'dina-${DateTime.now().microsecondsSinceEpoch}'});
       if (!mounted) return; widget.onChanged();
