@@ -213,7 +213,7 @@ def pay_invoice(organization_id: int, invoice_id: int, payload: PaymentInput, re
                 caller: Caller = Depends(accounting_caller)):
     try:
         payment, invoice = request.app.state.business_store.record_payment(
-            organization_id, invoice_id, payload.amount, payload.method, payload.reference
+            organization_id, invoice_id, payload.amount, payload.method, payload.reference, request.headers.get('Idempotency-Key')
         )
     except KeyError as exc:
         raise ApiError(ErrorCode.NOT_FOUND, "invoice does not exist in this organization") from exc
