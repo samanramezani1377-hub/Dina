@@ -10,6 +10,7 @@ from .errors import ApiError, ErrorCode
 from .identity import Caller, resolve_caller
 from .permissions import has_role
 from .models import JournalLine
+from .accounting import validate_journal
 
 router=APIRouter(prefix="/api/v1/organizations",tags=["business-modules"])
 
@@ -42,12 +43,15 @@ class ProductIn(BaseModel):
     name:str=Field(min_length=1,max_length=200); sku:str|None=None; unit:str="عدد"; purchase_price:Decimal=Field(default=0,ge=0); sale_price:Decimal=Field(default=0,ge=0); track_inventory:bool=True
 class WarehouseIn(BaseModel): name:str=Field(min_length=1,max_length=200)
 class StockIn(BaseModel):
-    warehouse_id:int; product_id:int; quantity:Decimal; movement_type:str; reference:str|None=None; movement_date:date
+    warehouse_id:int; product_id:int; quantity:Decimal=Field(gt=0); movement_type:str; reference:str|None=None; movement_date:date
+class StockTransferIn(BaseModel):
+    source_warehouse_id:int; target_warehouse_id:int; product_id:int; quantity:Decimal=Field(gt=0); reference:str|None=None; movement_date:date
 class CashIn(BaseModel):
     name:str=Field(min_length=1,max_length=200); kind:str; account_number:str|None=None; opening_balance:Decimal=0
     account_id:int|None=None
 class CashTxIn(BaseModel):
     cash_account_id:int; amount:Decimal=Field(gt=0); direction:str; description:str=""; reference:str|None=None; transaction_date:date
+    counter_account_id:int|None=None
 class CheckIn(BaseModel):
     party_name:str=Field(min_length=1,max_length=200); amount:Decimal=Field(gt=0); due_date:date; direction:str; bank_name:str|None=None; check_number:str|None=None; notes:str|None=None
 
@@ -90,16 +94,30 @@ def warehouses(organization_id:int,request:Request,c:Caller=Depends(caller)): re
 @router.post("/{organization_id}/stock-movements",status_code=201)
 def stock(organization_id:int,p:StockIn,request:Request,c:Caller=Depends(write_caller)):
     if p.movement_type not in {"receipt","issue","transfer_in","transfer_out","adjustment"}: raise ApiError(ErrorCode.VALIDATION_ERROR,"invalid movement type")
-    if p.quantity==0: raise ApiError(ErrorCode.VALIDATION_ERROR,"quantity cannot be zero")
-    with __import__("psycopg").connect(db(request),row_factory=__import__("psycopg").rows.dict_row) as cn:
+    with connect(request) as cn:
         ok=cn.execute("SELECT 1 FROM warehouses w JOIN products p ON p.organization_id=w.organization_id WHERE w.id=%s AND p.id=%s AND w.organization_id=%s",(p.warehouse_id,p.product_id,organization_id)).fetchone()
         if not ok: raise ApiError(ErrorCode.NOT_FOUND,"warehouse or product not found")
-        signed = p.quantity if p.movement_type in {"receipt","transfer_in","adjustment"} else -p.quantity
+        cn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",(f"stock:{organization_id}:{p.warehouse_id}:{p.product_id}",))
+        signed=p.quantity if p.movement_type in {"receipt","transfer_in","adjustment"} else -p.quantity
         if p.movement_type in {"issue","transfer_out"}:
-            balance=cn.execute("SELECT COALESCE(SUM(quantity),0) AS quantity FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s FOR UPDATE",(organization_id,p.warehouse_id,p.product_id)).fetchone()["quantity"]
-            if Decimal(balance) < p.quantity: raise ApiError(ErrorCode.VALIDATION_ERROR,"insufficient stock")
-        r=cn.execute("INSERT INTO stock_movements(organization_id,warehouse_id,product_id,quantity,movement_type,reference,movement_date) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.warehouse_id,p.product_id,signed,p.movement_type,p.reference,p.movement_date)).fetchone()
+            balance=cn.execute("SELECT COALESCE(SUM(quantity),0) AS quantity FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s",(organization_id,p.warehouse_id,p.product_id)).fetchone()["quantity"]
+            if Decimal(balance)<p.quantity: raise ApiError(ErrorCode.VALIDATION_ERROR,"insufficient stock")
+        r=cn.execute("INSERT INTO stock_movements(organization_id,warehouse_id,product_id,quantity,movement_type,reference,movement_date,unit_cost) VALUES(%s,%s,%s,%s,%s,%s,%s,COALESCE((SELECT purchase_price FROM products WHERE id=%s),0)) RETURNING *",(organization_id,p.warehouse_id,p.product_id,signed,p.movement_type,p.reference,p.movement_date,p.product_id)).fetchone()
     return _j(dict(r))
+
+@router.post("/{organization_id}/stock-transfers",status_code=201)
+def stock_transfer(organization_id:int,p:StockTransferIn,request:Request,c:Caller=Depends(write_caller)):
+    if p.source_warehouse_id==p.target_warehouse_id: raise ApiError(ErrorCode.VALIDATION_ERROR,"source and target warehouses must differ")
+    with connect(request) as cn:
+        ok=cn.execute("SELECT EXISTS(SELECT 1 FROM warehouses WHERE id=%s AND organization_id=%s) AS source_ok, EXISTS(SELECT 1 FROM warehouses WHERE id=%s AND organization_id=%s) AS target_ok, EXISTS(SELECT 1 FROM products WHERE id=%s AND organization_id=%s) AS product_ok",(p.source_warehouse_id,organization_id,p.target_warehouse_id,organization_id,p.product_id,organization_id)).fetchone()
+        if not ok["source_ok"] or not ok["target_ok"] or not ok["product_ok"]: raise ApiError(ErrorCode.NOT_FOUND,"warehouse or product not found")
+        cn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",(f"stock:{organization_id}:{p.product_id}",))
+        balance=cn.execute("SELECT COALESCE(SUM(quantity),0) AS quantity FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s",(organization_id,p.source_warehouse_id,p.product_id)).fetchone()["quantity"]
+        if Decimal(balance)<p.quantity: raise ApiError(ErrorCode.VALIDATION_ERROR,"insufficient stock")
+        avg=cn.execute("SELECT COALESCE(SUM(quantity*unit_cost) FILTER (WHERE quantity>0),0)/NULLIF(SUM(quantity) FILTER (WHERE quantity>0),0) AS cost FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s",(organization_id,p.source_warehouse_id,p.product_id)).fetchone()["cost"]
+        out_row=cn.execute("INSERT INTO stock_movements(organization_id,warehouse_id,product_id,quantity,movement_type,reference,movement_date,unit_cost) VALUES(%s,%s,%s,%s,'transfer_out',%s,%s,%s) RETURNING id",(organization_id,p.source_warehouse_id,p.product_id,-p.quantity,p.reference,p.movement_date,avg)).fetchone()
+        in_row=cn.execute("INSERT INTO stock_movements(organization_id,warehouse_id,product_id,quantity,movement_type,reference,movement_date,unit_cost) VALUES(%s,%s,%s,%s,'transfer_in',%s,%s,%s) RETURNING id",(organization_id,p.target_warehouse_id,p.product_id,p.quantity,p.reference,p.movement_date,avg)).fetchone()
+    return {"source_movement_id":out_row["id"],"target_movement_id":in_row["id"],"quantity":str(p.quantity),"unit_cost":str(avg)}
 @router.get("/{organization_id}/stock")
 def stock_report(organization_id:int,request:Request,c:Caller=Depends(caller)):
     return {"items":_j(q(request,"SELECT product_id,warehouse_id,SUM(quantity) AS quantity FROM stock_movements WHERE organization_id=%s GROUP BY product_id,warehouse_id ORDER BY product_id,warehouse_id",(organization_id,)))}
@@ -118,7 +136,7 @@ def cash_tx(organization_id:int,p:CashTxIn,request:Request,c:Caller=Depends(writ
     with __import__("psycopg").connect(db(request),row_factory=__import__("psycopg").rows.dict_row) as cn:
         ok=cn.execute("SELECT 1 FROM cash_accounts WHERE id=%s AND organization_id=%s",(p.cash_account_id,organization_id)).fetchone()
         if not ok: raise ApiError(ErrorCode.NOT_FOUND,"cash account not found")
-        r=cn.execute("INSERT INTO cash_transactions(organization_id,cash_account_id,amount,direction,description,reference,transaction_date) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.cash_account_id,p.amount,p.direction,p.description,p.reference,p.transaction_date)).fetchone()
+        r=cn.execute("INSERT INTO cash_transactions(organization_id,cash_account_id,amount,direction,description,reference,transaction_date,counter_account_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.cash_account_id,p.amount,p.direction,p.description,p.reference,p.transaction_date,p.counter_account_id)).fetchone()
     return _j(dict(r))
 @router.get("/{organization_id}/cash-accounts/{cash_account_id}/balance")
 def cash_balance(organization_id:int,cash_account_id:int,request:Request,c:Caller=Depends(caller)):
@@ -145,10 +163,14 @@ def create_check(organization_id:int,p:CheckIn,request:Request,c:Caller=Depends(
 def checks(organization_id:int,request:Request,c:Caller=Depends(caller)): return {"items":_j(q(request,"SELECT * FROM checks WHERE organization_id=%s ORDER BY due_date,id",(organization_id,)))}
 @router.post("/{organization_id}/checks/{check_id}/status")
 def check_status(organization_id:int,check_id:int,status:str,request:Request,c:Caller=Depends(write_caller)):
-    if status not in {"pending","deposited","cleared","bounced","cancelled"}: raise ApiError(ErrorCode.VALIDATION_ERROR,"invalid check status")
-    with __import__("psycopg").connect(db(request),row_factory=__import__("psycopg").rows.dict_row) as cn:
+    allowed={"pending":{"deposited","bounced","cancelled"},"deposited":{"cleared","bounced","cancelled"},"cleared":set(),"bounced":set(),"cancelled":set()}
+    if status not in allowed: raise ApiError(ErrorCode.VALIDATION_ERROR,"invalid check status")
+    with connect(request) as cn:
+        r=cn.execute("SELECT * FROM checks WHERE id=%s AND organization_id=%s FOR UPDATE",(check_id,organization_id)).fetchone()
+        if not r: raise ApiError(ErrorCode.NOT_FOUND,"check not found")
+        if status==r["status"]: return _j(dict(r))
+        if status not in allowed.get(r["status"],set()): raise ApiError(ErrorCode.VALIDATION_ERROR,f"invalid check transition: {r['status']} -> {status}")
         r=cn.execute("UPDATE checks SET status=%s WHERE id=%s AND organization_id=%s RETURNING *",(status,check_id,organization_id)).fetchone()
-    if not r: raise ApiError(ErrorCode.NOT_FOUND,"check not found")
     return _j(dict(r))
 
 class DocumentLineIn(BaseModel):
@@ -157,10 +179,10 @@ class DocumentLineIn(BaseModel):
     discount:Decimal=Field(default=0,ge=0); tax:Decimal=Field(default=0,ge=0)
 class SalesDocumentIn(BaseModel):
     customer_id:int; invoice_no:str=Field(min_length=1,max_length=100); issue_date:date
-    due_date:date|None=None; lines:list[DocumentLineIn]=Field(min_length=1)
+    due_date:date|None=None; warehouse_id:int|None=None; lines:list[DocumentLineIn]=Field(min_length=1)
 class PurchaseDocumentIn(BaseModel):
     supplier_id:int; invoice_no:str=Field(min_length=1,max_length=100); issue_date:date
-    due_date:date|None=None; lines:list[DocumentLineIn]=Field(min_length=1)
+    due_date:date|None=None; warehouse_id:int|None=None; lines:list[DocumentLineIn]=Field(min_length=1)
 
 def _doc_totals(lines):
     subtotal=sum((x.quantity*x.unit_price for x in lines),Decimal("0"))
@@ -174,7 +196,7 @@ def create_sale(organization_id:int,p:SalesDocumentIn,request:Request,c:Caller=D
     with connect(request) as cn:
         customer=cn.execute("SELECT 1 FROM customers WHERE id=%s AND organization_id=%s",(p.customer_id,organization_id)).fetchone()
         if not customer: raise ApiError(ErrorCode.NOT_FOUND,"customer not found")
-        r=cn.execute("INSERT INTO sales(organization_id,customer_id,invoice_no,issue_date,due_date,subtotal,discount,tax,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.customer_id,p.invoice_no,p.issue_date,p.due_date,subtotal,discount,tax,total)).fetchone()
+        r=cn.execute("INSERT INTO sales(organization_id,customer_id,invoice_no,issue_date,due_date,warehouse_id,subtotal,discount,tax,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.customer_id,p.invoice_no,p.issue_date,p.due_date,p.warehouse_id,subtotal,discount,tax,total)).fetchone()
         for x in p.lines:
             if x.product_id:
                 ok=cn.execute("SELECT 1 FROM products WHERE id=%s AND organization_id=%s",(x.product_id,organization_id)).fetchone()
@@ -191,7 +213,7 @@ def create_purchase(organization_id:int,p:PurchaseDocumentIn,request:Request,c:C
     with connect(request) as cn:
         supplier=cn.execute("SELECT 1 FROM suppliers WHERE id=%s AND organization_id=%s",(p.supplier_id,organization_id)).fetchone()
         if not supplier: raise ApiError(ErrorCode.NOT_FOUND,"supplier not found")
-        r=cn.execute("INSERT INTO purchases(organization_id,supplier_id,invoice_no,issue_date,due_date,subtotal,discount,tax,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.supplier_id,p.invoice_no,p.issue_date,p.due_date,subtotal,discount,tax,total)).fetchone()
+        r=cn.execute("INSERT INTO purchases(organization_id,supplier_id,invoice_no,issue_date,due_date,warehouse_id,subtotal,discount,tax,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.supplier_id,p.invoice_no,p.issue_date,p.due_date,p.warehouse_id,subtotal,discount,tax,total)).fetchone()
         for x in p.lines:
             if x.product_id:
                 ok=cn.execute("SELECT 1 FROM products WHERE id=%s AND organization_id=%s",(x.product_id,organization_id)).fetchone()
