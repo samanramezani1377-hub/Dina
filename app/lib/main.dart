@@ -7,7 +7,7 @@ import 'app/storage/key_value_store.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final KeyValueStore store = await SharedPreferencesKeyValueStore.open();
+  final KeyValueStore store = await SecureKeyValueStore.open();
   runApp(
     DinaApp(
       dependencies: buildDinaAppDependencies(
