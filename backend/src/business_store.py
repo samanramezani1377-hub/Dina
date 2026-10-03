@@ -67,7 +67,7 @@ class BusinessStore:
         self._memory = database_url is None
         self.database_url = (database_url or "").replace("postgresql+psycopg://", "postgresql://", 1)
         self._customers: list[dict] = []; self._invoices: list[dict] = []
-        self._payments: list[dict] = []; self._subscriptions: list[dict] = []
+        self._payments: list[dict] = []; self._subscriptions: list[dict] = []; self._payment_keys: dict[tuple[int,str], int] = {}
         self._ids = {"customer": 1, "invoice": 1, "payment": 1, "subscription": 1}
     def _connect(self):
         return psycopg.connect(self.database_url, row_factory=dict_row)
@@ -98,7 +98,7 @@ class BusinessStore:
     def invoice(self, org: int, invoice_id: int):
         if self._memory: return next((x for x in self._invoices if x["id"] == invoice_id and x["organization_id"] == org), None)
         with self._connect() as conn: return conn.execute("SELECT * FROM invoices WHERE id=%s AND organization_id=%s",(invoice_id,org)).fetchone()
-    def record_payment(self, org: int, invoice_id: int, amount: Decimal, method: str, reference: str | None):
+    def record_payment(self, org: int, invoice_id: int, amount: Decimal, method: str, reference: str | None, idempotency_key: str | None = None):
         inv=self.invoice(org,invoice_id)
         if inv is None: raise KeyError("invoice")
         remaining=Decimal(inv["total"])-Decimal(inv["paid"])
@@ -109,7 +109,7 @@ class BusinessStore:
             inv["paid"]=Decimal(inv["paid"])+amount; inv["status"]="paid" if inv["paid"] == inv["total"] else "partial"
             return p,inv
         with self._connect() as conn:
-            p=conn.execute("INSERT INTO payments(organization_id,invoice_id,amount,method,reference) VALUES(%s,%s,%s,%s,%s) RETURNING *",(org,invoice_id,amount,method,reference)).fetchone()
+            p=conn.execute("INSERT INTO payments(organization_id,invoice_id,amount,method,reference) VALUES(%s,%s,%s,%s,%s) RETURNING *",(org,invoice_id,amount,method,reference)).fetchone()\n            if idempotency_key:\n                conn.execute("INSERT INTO payment_idempotency(organization_id,idempotency_key,payment_id) VALUES(%s,%s,%s)",(org,idempotency_key,p["id"]))
             paid=Decimal(inv["paid"])+amount; status="paid" if paid == Decimal(inv["total"]) else "partial"
             inv=conn.execute("UPDATE invoices SET paid=%s,status=%s WHERE id=%s AND organization_id=%s RETURNING *",(paid,status,invoice_id,org)).fetchone()
         return p,inv
