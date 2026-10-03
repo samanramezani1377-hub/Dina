@@ -18,7 +18,7 @@ class _ManagementPageState extends State<ManagementPage> {
     const Text('این بخش برای مالک و مدیر سازمان است؛ مجوز نهایی همیشه در Backend بررسی می‌شود.'),
     const SizedBox(height:16),
     FutureBuilder<JsonMap?>(future:subscription(),builder:(context,s){
-      if(s.hasError)return ErrorView(error:s.error.toString(),onRetry:()=>setState((){}));
+      if(s.hasError)return _ErrorView(error:s.error.toString(),onRetry:()=>setState((){}));
       final x=s.data?['subscription'];
       final m=x is JsonMap?x:<String,Object?>{};
       return Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
@@ -48,9 +48,21 @@ class _AuditDialog extends StatelessWidget{
   @override Widget build(BuildContext context)=>AlertDialog(title:const Text('رویدادهای حسابرسی'),content:SizedBox(width:700,height:500,child:FutureBuilder<JsonMap?>(future:future,builder:(context,s){
     if(s.connectionState!=ConnectionState.done)return const Center(child:CircularProgressIndicator());
     if(s.hasError)return Text(s.error.toString());
-    final raw=s.data?['items'];final items=raw is List?raw.whereType<JsonMap>():<JsonMap>[];
+    final raw=s.data?['items'];final items=raw is List?raw.whereType<JsonMap>().toList():<JsonMap>[];
     return ListView(children:[for(final x in items.reversed)ListTile(
       leading:const Icon(Icons.event_note),title:Text(v(x['action'])),subtitle:Text(v(x['occurred_at'])+' • '+v(x['entity'])+' #'+v(x['entity_id'])),
     )]);
   })),actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('بستن'))]);
+}
+
+class _ErrorView extends StatelessWidget {
+  const _ErrorView({required this.error, required this.onRetry});
+  final String error; final VoidCallback onRetry;
+  @override Widget build(BuildContext context) => Center(child: Padding(
+    padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const Icon(Icons.error_outline, size: 48), const SizedBox(height: 12),
+      const Text('بارگذاری ناموفق بود'), Text(error, textAlign: TextAlign.center),
+      const SizedBox(height: 12), FilledButton(onPressed: onRetry, child: const Text('تلاش دوباره')),
+    ],
+  ));
 }
