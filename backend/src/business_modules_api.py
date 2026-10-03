@@ -9,6 +9,7 @@ from .auth import token_user_id
 from .errors import ApiError, ErrorCode
 from .identity import Caller, resolve_caller
 from .permissions import has_role
+from .models import JournalLine
 
 router=APIRouter(prefix="/api/v1/organizations",tags=["business-modules"])
 
@@ -92,7 +93,11 @@ def stock(organization_id:int,p:StockIn,request:Request,c:Caller=Depends(write_c
     with __import__("psycopg").connect(db(request),row_factory=__import__("psycopg").rows.dict_row) as cn:
         ok=cn.execute("SELECT 1 FROM warehouses w JOIN products p ON p.organization_id=w.organization_id WHERE w.id=%s AND p.id=%s AND w.organization_id=%s",(p.warehouse_id,p.product_id,organization_id)).fetchone()
         if not ok: raise ApiError(ErrorCode.NOT_FOUND,"warehouse or product not found")
-        r=cn.execute("INSERT INTO stock_movements(organization_id,warehouse_id,product_id,quantity,movement_type,reference,movement_date) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.warehouse_id,p.product_id,p.quantity,p.movement_type,p.reference,p.movement_date)).fetchone()
+        signed = p.quantity if p.movement_type in {"receipt","transfer_in","adjustment"} else -p.quantity
+        if p.movement_type in {"issue","transfer_out"}:
+            balance=cn.execute("SELECT COALESCE(SUM(quantity),0) AS quantity FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s FOR UPDATE",(organization_id,p.warehouse_id,p.product_id)).fetchone()["quantity"]
+            if Decimal(balance) < p.quantity: raise ApiError(ErrorCode.VALIDATION_ERROR,"insufficient stock")
+        r=cn.execute("INSERT INTO stock_movements(organization_id,warehouse_id,product_id,quantity,movement_type,reference,movement_date) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.warehouse_id,p.product_id,signed,p.movement_type,p.reference,p.movement_date)).fetchone()
     return _j(dict(r))
 @router.get("/{organization_id}/stock")
 def stock_report(organization_id:int,request:Request,c:Caller=Depends(caller)):
