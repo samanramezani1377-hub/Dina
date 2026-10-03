@@ -230,31 +230,76 @@ class DocumentPostIn(BaseModel):
     revenue_or_inventory_account_id:int
     tax_account_id:int|None=None
     discount_account_id:int|None=None
+    inventory_account_id:int|None=None
+    cogs_account_id:int|None=None
+    warehouse_id:int|None=None
+
+def _open_fiscal_year(cn,organization_id,entry_date):
+    row=cn.execute("SELECT id FROM fiscal_years WHERE organization_id=%s AND status='open' AND starts_on<=%s AND ends_on>=%s FOR UPDATE",(organization_id,entry_date,entry_date)).fetchone()
+    if not row: raise ApiError(ErrorCode.VALIDATION_ERROR,"no open fiscal year covers this document date")
+
+def _add_entry(cn,organization_id,document_no,description,entry_date,lines):
+    validate_journal(lines)
+    for line in lines:
+        if not cn.execute("SELECT 1 FROM accounts WHERE id=%s AND organization_id=%s",(line.account_id,organization_id)).fetchone(): raise ApiError(ErrorCode.NOT_FOUND,"account does not exist in this organization")
+    try:
+        row=cn.execute("INSERT INTO journal_entries(organization_id,document_no,description,status,entry_date,posted_at) VALUES(%s,%s,%s,'posted',%s,NOW()) RETURNING id",(organization_id,document_no,description,entry_date)).fetchone()
+    except psycopg.errors.UniqueViolation:
+        raise ApiError(ErrorCode.VALIDATION_ERROR,"document number already exists in this organization")
+    for line in lines:
+        cn.execute("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES(%s,%s,%s,%s)",(row["id"],line.account_id,line.debit,line.credit))
+    return row["id"]
+
+def _average_cost(cn,organization_id,warehouse_id,product_id):
+    row=cn.execute("SELECT COALESCE(SUM(quantity*unit_cost) FILTER (WHERE quantity>0),0)/NULLIF(SUM(quantity) FILTER (WHERE quantity>0),0) AS cost FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s",(organization_id,warehouse_id,product_id)).fetchone()
+    return Decimal(row["cost"] or 0)
 
 def _post_document(request, organization_id, document_table, line_table, document_id, p, is_sale):
-    store=request.app.state.accounting_store
     with connect(request) as cn:
         doc=cn.execute(f"SELECT * FROM {document_table} WHERE id=%s AND organization_id=%s FOR UPDATE",(document_id,organization_id)).fetchone()
         if not doc: raise ApiError(ErrorCode.NOT_FOUND,"document not found")
         if doc["status"]!="draft": raise ApiError(ErrorCode.VALIDATION_ERROR,"document is not in draft status")
-        if doc["journal_entry_id"]: raise ApiError(ErrorCode.VALIDATION_ERROR,"document is already linked to a journal")
-        if p.revenue_or_inventory_account_id==p.receivable_or_payable_account_id: raise ApiError(ErrorCode.VALIDATION_ERROR,"accounts must be different")
-        lines=[JournalLine(p.receivable_or_payable_account_id, doc["total"], Decimal("0")) if is_sale else JournalLine(p.revenue_or_inventory_account_id, doc["total"], Decimal("0"))]
+        _open_fiscal_year(cn,organization_id,doc["issue_date"])
+        warehouse_id=p.warehouse_id or doc["warehouse_id"]
+        item_rows=cn.execute(f"SELECT * FROM {line_table} WHERE {("sale_id" if is_sale else "purchase_id") }=%s ORDER BY id",(document_id,)).fetchall()
         if is_sale:
             lines=[JournalLine(p.receivable_or_payable_account_id,doc["total"],Decimal("0")),JournalLine(p.revenue_or_inventory_account_id,Decimal("0"),doc["subtotal"]-doc["discount"])]
         else:
             lines=[JournalLine(p.revenue_or_inventory_account_id,doc["subtotal"]-doc["discount"],Decimal("0")),JournalLine(p.receivable_or_payable_account_id,Decimal("0"),doc["total"])]
         if doc["tax"]>0:
             if not p.tax_account_id: raise ApiError(ErrorCode.VALIDATION_ERROR,"tax account is required when document has tax")
-            if is_sale: lines.append(JournalLine(p.tax_account_id,Decimal("0"),doc["tax"]))
-            else: lines.append(JournalLine(p.tax_account_id,doc["tax"],Decimal("0")))
+            lines.append(JournalLine(p.tax_account_id,Decimal("0"),doc["tax"]) if is_sale else JournalLine(p.tax_account_id,doc["tax"],Decimal("0")))
         if doc["discount"]>0 and p.discount_account_id:
-            if is_sale: lines.append(JournalLine(p.discount_account_id,doc["discount"],Decimal("0")))
-            else: lines.append(JournalLine(p.discount_account_id,Decimal("0"),doc["discount"]))
-        entry=store.add_entry(organization_id,doc["invoice_no"],("Sale " if is_sale else "Purchase ")+doc["invoice_no"],doc["issue_date"],lines,status="posted")
-        cn.execute(f"UPDATE {document_table} SET status='posted',journal_entry_id=%s WHERE id=%s AND organization_id=%s",(entry.id,document_id,organization_id))
-    return _j({"document_id":document_id,"status":"posted","journal_entry_id":entry.id})
-
+            lines.append(JournalLine(p.discount_account_id,doc["discount"],Decimal("0")) if is_sale else JournalLine(p.discount_account_id,Decimal("0"),doc["discount"]))
+        inventory_total=Decimal("0")
+        tracked=[x for x in item_rows if x["product_id"]]
+        if tracked and warehouse_id is None:
+            raise ApiError(ErrorCode.VALIDATION_ERROR,"warehouse is required for product documents")
+        if warehouse_id:
+            if not cn.execute("SELECT 1 FROM warehouses WHERE id=%s AND organization_id=%s",(warehouse_id,organization_id)).fetchone(): raise ApiError(ErrorCode.NOT_FOUND,"warehouse not found")
+        for x in item_rows:
+            if not x["product_id"]: continue
+            prod=cn.execute("SELECT * FROM products WHERE id=%s AND organization_id=%s FOR UPDATE",(x["product_id"],organization_id)).fetchone()
+            if not prod: raise ApiError(ErrorCode.NOT_FOUND,"product not found")
+            if not prod["track_inventory"]: continue
+            if is_sale:
+                if p.cogs_account_id is None or p.inventory_account_id is None: raise ApiError(ErrorCode.VALIDATION_ERROR,"cogs and inventory accounts are required for inventory sales")
+                cn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",(f"stock:{organization_id}:{warehouse_id}:{x['product_id']}",))
+                bal=cn.execute("SELECT COALESCE(SUM(quantity),0) AS q FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s",(organization_id,warehouse_id,x["product_id"])).fetchone()["q"]
+                if Decimal(bal)<Decimal(x["quantity"]): raise ApiError(ErrorCode.VALIDATION_ERROR,"insufficient stock for sale")
+                unit_cost=_average_cost(cn,organization_id,warehouse_id,x["product_id"])
+                cost=unit_cost*Decimal(x["quantity"])
+                inventory_total+=cost
+                cn.execute("INSERT INTO stock_movements(organization_id,warehouse_id,product_id,quantity,movement_type,reference,movement_date,unit_cost) VALUES(%s,%s,%s,%s,'issue',%s,%s,%s)",(organization_id,warehouse_id,x["product_id"],-x["quantity"],doc["invoice_no"],doc["issue_date"],unit_cost))
+            else:
+                cost=(Decimal(x["quantity"])*Decimal(x["unit_price"])-Decimal(x["discount"]))/Decimal(x["quantity"])
+                cn.execute("INSERT INTO stock_movements(organization_id,warehouse_id,product_id,quantity,movement_type,reference,movement_date,unit_cost) VALUES(%s,%s,%s,%s,'receipt',%s,%s,%s)",(organization_id,warehouse_id,x["product_id"],x["quantity"],doc["invoice_no"],doc["issue_date"],cost))
+        if inventory_total:
+            lines.append(JournalLine(p.cogs_account_id,inventory_total,Decimal("0")))
+            lines.append(JournalLine(p.inventory_account_id,Decimal("0"),inventory_total))
+        entry_id=_add_entry(cn,organization_id,doc["invoice_no"],("Sale " if is_sale else "Purchase ")+doc["invoice_no"],doc["issue_date"],lines)
+        cn.execute(f"UPDATE {document_table} SET status='posted',journal_entry_id=%s WHERE id=%s AND organization_id=%s",(entry_id,document_id,organization_id))
+    return _j({"document_id":document_id,"status":"posted","journal_entry_id":entry_id})
 @router.post("/{organization_id}/sales/{sale_id}/post")
 def post_sale(organization_id:int,sale_id:int,p:DocumentPostIn,request:Request,c:Caller=Depends(write_caller)):
     return _post_document(request,organization_id,"sales","sale_lines",sale_id,p,True)
