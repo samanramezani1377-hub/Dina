@@ -3,7 +3,7 @@ import '../../../app/app_scope.dart';
 import '../../../app/api/api_client.dart';
 
 String valueOf(Object? value) => value?.toString() ?? '';
-String pathFor(String org, String tail) => '/organizations/' + org + '/' + tail;
+String pathFor(String org, String tail) => '/organizations/${org}/${tail}';
 
 class DashboardHomePage extends StatefulWidget {
   const DashboardHomePage({required this.organizationName, required this.userLabel, super.key});
@@ -26,7 +26,7 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
         final totals = data['totals'] is JsonMap ? data['totals']! as JsonMap : <String,Object?>{};
         return ListView(padding: const EdgeInsets.all(20), children: [
           Text(widget.organizationName, style: Theme.of(context).textTheme.headlineSmall),
-          Text('خوش آمدید، ' + widget.userLabel),
+          Text('خوش آمدید، ${widget.userLabel}'),
           const SizedBox(height: 20),
           Wrap(spacing: 12, runSpacing: 12, children: [
             MetricCard(title: 'جمع بدهکار', value: valueOf(totals['debit_total'])),
@@ -167,8 +167,8 @@ class ReportPage extends StatelessWidget {
         )),
         for (final account in accounts)
           ListTile(
-            title: Text(valueOf(account['account_code']) + ' - ' + valueOf(account['account_name'])),
-            subtitle: Text('مانده: ' + valueOf(account['closing_balance'] ?? account['balance'])),
+            title: Text('${valueOf(account['account_code'])} - ${valueOf(account['account_name'])}'),
+            subtitle: Text('مانده: ${valueOf(account['closing_balance'] ?? account['balance'])}'),
           ),
       ];
     },
@@ -245,7 +245,7 @@ class _PaymentsPageState extends State<PaymentsPage> {
     try {
       await AppScope.of(context).api.post(pathFor(widget.org, 'invoices/' + invoiceId.toString() + '/payments'), body: {
         'amount': amount.text.trim(), 'method': method.text.trim(), 'reference': reference.text.trim().isEmpty ? null : reference.text.trim(),
-      }, extraHeaders: {'Idempotency-Key': 'dina-' + DateTime.now().microsecondsSinceEpoch.toString()});
+      }, extraHeaders: {'Idempotency-Key': 'dina-${DateTime.now().microsecondsSinceEpoch}'});
       if (!mounted) return; widget.onChanged();
     } catch (error) { if (mounted) showError(context, error); }
   }
@@ -312,7 +312,7 @@ class _DataFrameState extends State<DataFrame> {
     if (items.isEmpty) return const [Card(child: ListTile(title: Text('داده‌ای ثبت نشده است.')))];
     return [for (final item in items) Card(child: ListTile(
       title: Text(valueOf(item['name'] ?? item['invoice_no'] ?? item['id'])),
-      subtitle: Text(item.entries.take(5).map((e) => e.key + ': ' + valueOf(e.value)).join(' | ')),
+      subtitle: Text(item.entries.take(5).map((e) => '${e.key}: ${valueOf(e.value)}').join(' | ')),
     ))];
   }
 }
