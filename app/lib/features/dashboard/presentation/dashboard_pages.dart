@@ -17,25 +17,32 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
     return scope.api.get(pathFor(scope.authController.selectedOrganizationId!, 'trial-balance'));
   }
   @override Widget build(BuildContext context) {
-    return FutureBuilder<JsonMap?>(
-      future: load(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError) return ErrorView(error: snapshot.error.toString(), onRetry: () => setState(() {}));
-        final data = snapshot.data ?? <String,Object?>{};
-        final totals = data['totals'] is JsonMap ? data['totals']! as JsonMap : <String,Object?>{};
-        return ListView(padding: const EdgeInsets.all(20), children: [
-          Text(widget.organizationName, style: Theme.of(context).textTheme.headlineSmall),
-          Text('خوش آمدید، $widget.userLabel'),
-          const SizedBox(height: 20),
-          Wrap(spacing: 12, runSpacing: 12, children: [
-            MetricCard(title: 'جمع بدهکار', value: valueOf(totals['debit_total'])),
-            MetricCard(title: 'جمع بستانکار', value: valueOf(totals['credit_total'])),
-            MetricCard(title: 'اختلاف', value: valueOf(totals['difference'])),
-            MetricCard(title: 'وضعیت', value: data['is_balanced'] == true ? 'متوازن' : 'نیازمند بررسی'),
-          ]),
-        ]);
-      },
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(widget.organizationName, style: Theme.of(context).textTheme.headlineSmall),
+        Text('خوش آمدید، $widget.userLabel'),
+        const SizedBox(height: 20),
+        FutureBuilder<JsonMap?>(
+          future: load(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()));
+            }
+            if (snapshot.hasError) {
+              return ErrorView(error: snapshot.error.toString(), onRetry: () => setState(() {}));
+            }
+            final data = snapshot.data ?? <String,Object?>{};
+            final totals = data['totals'] is JsonMap ? data['totals']! as JsonMap : <String,Object?>{};
+            return Wrap(spacing: 12, runSpacing: 12, children: [
+              MetricCard(title: 'جمع بدهکار', value: valueOf(totals['debit_total'])),
+              MetricCard(title: 'جمع بستانکار', value: valueOf(totals['credit_total'])),
+              MetricCard(title: 'اختلاف', value: valueOf(totals['difference'])),
+              MetricCard(title: 'وضعیت', value: data['is_balanced'] == true ? 'متوازن' : 'نیازمند بررسی'),
+            ]);
+          },
+        ),
+      ],
     );
   }
 }
