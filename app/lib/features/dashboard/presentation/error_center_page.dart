@@ -122,7 +122,7 @@ class _ErrorView extends StatelessWidget {
       const Text('بارگذاری ناموفق بود'), Text(error, textAlign: TextAlign.center),
       const SizedBox(height: 12), FilledButton(onPressed: onRetry, child: const Text('تلاش دوباره')),
     ],
-  ));
+  )));
 }
 void showError(BuildContext context, Object error) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
