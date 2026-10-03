@@ -1,4 +1,4 @@
-import 'package:dina_app/features/dashboard/domain/shell_destination.dart';
+import 'package:dina_app/features/dashboard/domain/shell_destinations_v3.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -208,7 +208,7 @@ void main() {
         store: signedInStore(),
         surfaceSize: _desktop,
       );
-      await tester.tap(find.text('سند حسابداری').last);
+      await tester.tap(find.text('اسناد حسابداری').last);
       await tester.pumpAndSettle();
       expect(find.text('ثبت سند حسابداری'), findsOneWidget);
 
