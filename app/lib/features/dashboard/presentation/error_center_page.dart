@@ -14,26 +14,26 @@ class _ErrorCenterPageState extends State<ErrorCenterPage> {
   late Future<JsonMap?> future;
   @override void initState() { super.initState(); future = load(); }
   Future<JsonMap?> load() => AppScope.of(context).api.get(
-    '/organizations/' + widget.org + '/errors',
+    '/organizations/${widget.org}/errors',
     query: {'limit': '200', 'unresolved_only': unresolvedOnly.toString(), if (code != null && code!.isNotEmpty) 'code': code!},
   );
   void reload() => setState(() => future = load());
   String v(Object? x) => x?.toString() ?? '—';
   String fullLog(JsonMap item) => [
     'DINA ERROR LOG',
-    'ID: ' + v(item['id']),
-    'Correlation ID: ' + v(item['correlation_id']),
-    'Time: ' + v(item['occurred_at']),
-    'Level: ' + v(item['level']),
-    'Code: ' + v(item['code']),
-    'HTTP: ' + v(item['http_status']),
-    'Method: ' + v(item['method']),
-    'Path: ' + v(item['path']),
-    'User ID: ' + v(item['user_id']),
-    'Organization ID: ' + v(item['organization_id']),
-    'IP: ' + v(item['ip_address']),
-    'User Agent: ' + v(item['user_agent']),
-    'Details: ' + v(item['details']),
+    'ID: ${v(item['id'])}',
+    'Correlation ID: ${v(item['correlation_id'])}',
+    'Time: ${v(item['occurred_at'])}',
+    'Level: ${v(item['level'])}',
+    'Code: ${v(item['code'])}',
+    'HTTP: ${v(item['http_status'])}',
+    'Method: ${v(item['method'])}',
+    'Path: ${v(item['path'])}',
+    'User ID: ${v(item['user_id'])}',
+    'Organization ID: ${v(item['organization_id'])}',
+    'IP: ${v(item['ip_address'])}',
+    'User Agent: ${v(item['user_agent'])}',
+    'Details: ${v(item['details'])}',
     '',
     'Traceback:',
     v(item['traceback']),
@@ -44,7 +44,7 @@ class _ErrorCenterPageState extends State<ErrorCenterPage> {
   }
   Future<void> resolve(JsonMap item) async {
     try {
-      await AppScope.of(context).api.post('/organizations/' + widget.org + '/errors/' + v(item['id']) + '/resolve');
+      await AppScope.of(context).api.post('/organizations/${widget.org}/errors/${v(item['id'])}/resolve');
       reload();
     } catch (e) { if (mounted) showError(context, e); }
   }
@@ -88,12 +88,12 @@ class _ErrorCard extends StatelessWidget {
     final critical = v(item['level']) == 'critical';
     return Card(margin: const EdgeInsets.only(bottom: 10), child: ExpansionTile(
       leading: CircleAvatar(child: Icon(critical ? Icons.priority_high : Icons.error_outline)),
-      title: Text(v(item['code']) + '  •  HTTP ' + v(item['http_status'])),
-      subtitle: Text(v(item['occurred_at']) + '  •  ' + v(item['correlation_id']), maxLines: 2),
+      title: Text('${v(item['code'])}  •  HTTP ${v(item['http_status'])}'),
+      subtitle: Text('${v(item['occurred_at'])}  •  ${v(item['correlation_id'])}', maxLines: 2),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       children: [
         SelectableText(v(item['message'])), const SizedBox(height: 8),
-        _kv('مسیر', v(item['method']) + ' ' + v(item['path'])),
+        _kv('مسیر', '${v(item['method'])} ${v(item['path'])}'),
         _kv('کاربر', v(item['user_id'])), _kv('سازمان', v(item['organization_id'])),
         _kv('IP', v(item['ip_address'])), _kv('جزئیات', v(item['details'])),
         if (v(item['traceback']) != '—') Container(width: double.infinity, constraints: const BoxConstraints(maxHeight: 360),
