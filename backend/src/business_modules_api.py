@@ -3,6 +3,8 @@ from datetime import date
 from decimal import Decimal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+import psycopg
+from psycopg.rows import dict_row
 from .auth import token_user_id
 from .errors import ApiError, ErrorCode
 from .identity import Caller, resolve_caller
@@ -25,6 +27,7 @@ def _j(v):
     if isinstance(v,list): return [_j(x) for x in v]
     return v
 def db(request): return request.app.state.settings.database_url.replace("postgresql+psycopg://","postgresql://",1)
+def connect(request): return psycopg.connect(db(request), row_factory=dict_row)
 def q(request,sql,args=()):
     import psycopg
     from psycopg.rows import dict_row
@@ -49,7 +52,7 @@ class CheckIn(BaseModel):
 @router.post("/{organization_id}/fiscal-years",status_code=201)
 def create_fiscal_year(organization_id:int,p:FiscalIn,request:Request,c:Caller=Depends(write_caller)):
     if p.ends_on<p.starts_on: raise ApiError(ErrorCode.VALIDATION_ERROR,"fiscal year dates are invalid")
-    with __import__("psycopg").connect(db(request),row_factory=__import__("psycopg").rows.dict_row) as cn:
+    with connect(request) as cn:
         r=cn.execute("INSERT INTO fiscal_years(organization_id,name,starts_on,ends_on) VALUES(%s,%s,%s,%s) RETURNING *",(organization_id,p.name,p.starts_on,p.ends_on)).fetchone()
     return _j(dict(r))
 @router.get("/{organization_id}/fiscal-years")
