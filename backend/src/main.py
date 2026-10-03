@@ -27,6 +27,7 @@ from .auth import UserDirectory
 from .auth_api import router as auth_router
 from .config import get_settings
 from .errors import ApiError, register_error_handlers
+from .error_log_api import router as error_log_router
 from .ledger_api import router as ledger_router
 from .operations_api import router as operations_router
 from .models import JournalLine
@@ -65,6 +66,7 @@ app = FastAPI(title="Dina API", version="0.3.0", lifespan=lifespan)
 app.include_router(ledger_router)
 app.include_router(auth_router)
 app.include_router(operations_router)
+app.include_router(error_log_router)
 # Handlers are dispatched by exception type at request time, so this can sit
 # after the routers without changing which failure goes where.
 register_error_handlers(app)
