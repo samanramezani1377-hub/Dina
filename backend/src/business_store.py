@@ -99,20 +99,55 @@ class BusinessStore:
         if self._memory: return next((x for x in self._invoices if x["id"] == invoice_id and x["organization_id"] == org), None)
         with self._connect() as conn: return conn.execute("SELECT * FROM invoices WHERE id=%s AND organization_id=%s",(invoice_id,org)).fetchone()
     def record_payment(self, org: int, invoice_id: int, amount: Decimal, method: str, reference: str | None, idempotency_key: str | None = None):
-        inv=self.invoice(org,invoice_id)
-        if inv is None: raise KeyError("invoice")
-        remaining=Decimal(inv["total"])-Decimal(inv["paid"])
-        if amount <= 0 or amount > remaining: raise ValueError("payment exceeds invoice balance")
+        inv = self.invoice(org, invoice_id)
+        if inv is None:
+            raise KeyError("invoice")
+        if amount <= 0 or amount > Decimal(inv["total"]) - Decimal(inv["paid"]):
+            raise ValueError("payment exceeds invoice balance")
+        if idempotency_key and self._memory:
+            existing_id = self._payment_keys.get((org, idempotency_key))
+            if existing_id is not None:
+                existing = next(p for p in self._payments if p["id"] == existing_id)
+                return existing, inv
+        if idempotency_key and not self._memory:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT payment_id FROM payment_idempotency WHERE organization_id=%s AND idempotency_key=%s",
+                    (org, idempotency_key),
+                ).fetchone()
+                if row:
+                    payment = conn.execute(
+                        "SELECT * FROM payments WHERE id=%s AND organization_id=%s",
+                        (row["payment_id"], org),
+                    ).fetchone()
+                    return payment, inv
         if self._memory:
-            p={"id":self._ids["payment"],"organization_id":org,"invoice_id":invoice_id,"amount":amount,"method":method,"reference":reference}
-            self._ids["payment"] += 1; self._payments.append(p)
-            inv["paid"]=Decimal(inv["paid"])+amount; inv["status"]="paid" if inv["paid"] == inv["total"] else "partial"
-            return p,inv
+            payment = {"id": self._ids["payment"], "organization_id": org, "invoice_id": invoice_id, "amount": amount, "method": method, "reference": reference}
+            self._ids["payment"] += 1
+            self._payments.append(payment)
+            if idempotency_key:
+                self._payment_keys[(org, idempotency_key)] = payment["id"]
+            inv["paid"] = Decimal(inv["paid"]) + amount
+            inv["status"] = "paid" if inv["paid"] == inv["total"] else "partial"
+            return payment, inv
         with self._connect() as conn:
-            p=conn.execute("INSERT INTO payments(organization_id,invoice_id,amount,method,reference) VALUES(%s,%s,%s,%s,%s) RETURNING *",(org,invoice_id,amount,method,reference)).fetchone()\n            if idempotency_key:\n                conn.execute("INSERT INTO payment_idempotency(organization_id,idempotency_key,payment_id) VALUES(%s,%s,%s)",(org,idempotency_key,p["id"]))
-            paid=Decimal(inv["paid"])+amount; status="paid" if paid == Decimal(inv["total"]) else "partial"
-            inv=conn.execute("UPDATE invoices SET paid=%s,status=%s WHERE id=%s AND organization_id=%s RETURNING *",(paid,status,invoice_id,org)).fetchone()
-        return p,inv
+            payment = conn.execute(
+                "INSERT INTO payments(organization_id,invoice_id,amount,method,reference) VALUES(%s,%s,%s,%s,%s) RETURNING *",
+                (org, invoice_id, amount, method, reference),
+            ).fetchone()
+            if idempotency_key:
+                conn.execute(
+                    "INSERT INTO payment_idempotency(organization_id,idempotency_key,payment_id) VALUES(%s,%s,%s)",
+                    (org, idempotency_key, payment["id"]),
+                )
+            paid = Decimal(inv["paid"]) + amount
+            status = "paid" if paid == Decimal(inv["total"]) else "partial"
+            inv = conn.execute(
+                "UPDATE invoices SET paid=%s,status=%s WHERE id=%s AND organization_id=%s RETURNING *",
+                (paid, status, invoice_id, org),
+            ).fetchone()
+        return payment, inv
+
     def subscription(self, org: int):
         if self._memory: return next((x for x in reversed(self._subscriptions) if x["organization_id"] == org), None)
         with self._connect() as conn: return conn.execute("SELECT * FROM subscriptions WHERE organization_id=%s ORDER BY id DESC LIMIT 1",(org,)).fetchone()
