@@ -57,9 +57,7 @@ uvicorn src.main:app --app-dir backend
 | `JWT_EXPIRE_MINUTES` | `60` | عمر توکن. |
 | `DATABASE_URL` | `postgresql+psycopg://dina@localhost:5432/dina` | رشته اتصال. |
 
-> **نکته مهم:** در حال حاضر هیچ کدی `DATABASE_URL` را نمی‌خواند و کل state اپلیکیشن در حافظه است.
-> تنها جدولی که ساخته و آزمایش می‌شود `audit_logs` است و آن هم با یک store درون‌حافظه‌ای
-> پیش‌فرض سرویس می‌شود. جزئیات در `docs/IMPLEMENTATION_STATUS.md`.
+**وضعیت فعلی:** محیط production از PostgreSQL برای state اصلی استفاده می‌کند؛ migrationهای حسابداری، هویت، SaaS، idempotency، error log و ماژول‌های عملیاتی در CI روی PostgreSQL واقعی اعمال می‌شوند. جزئیات وضعیت واقعی در `docs/IMPLEMENTATION_STATUS.md` نگهداری می‌شود.
 
 ## اجرای تست‌ها
 
