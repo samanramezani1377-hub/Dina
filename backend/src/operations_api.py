@@ -14,7 +14,7 @@ from .business_store import BusinessStore
 
 router = APIRouter(prefix="/api/v1", tags=["operations"])
 
-ROLES = {"owner","manager","accountant","sales","inventory","viewer"}
+ROLES = {"owner","manager","accountant","sales","warehouse","viewer"}
 
 def _caller(request: Request, organization_id: int, user_id: int, minimum: str = "viewer") -> Caller:
     caller = resolve_caller(user_id, organization_id, request.app.state.memberships)
@@ -28,6 +28,20 @@ def accounting_caller(
     user_id: int = Depends(token_user_id),
 ) -> Caller:
     return _caller(request, organization_id, user_id, ACCOUNTING_ROLE)
+
+def sales_caller(
+    organization_id: int,
+    request: Request,
+    user_id: int = Depends(token_user_id),
+) -> Caller:
+    return _caller(request, organization_id, user_id, "sales")
+
+def manager_caller(
+    organization_id: int,
+    request: Request,
+    user_id: int = Depends(token_user_id),
+) -> Caller:
+    return _caller(request, organization_id, user_id, "manager")
 
 def member_caller(
     organization_id: int,
