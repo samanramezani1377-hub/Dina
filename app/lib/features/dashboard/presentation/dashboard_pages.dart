@@ -76,6 +76,15 @@ class _AccountingWorkspaceState extends State<AccountingWorkspace> {
       'trial-balance' => ReportPage(org: org, path: 'trial-balance', title: 'تراز آزمایشی'),
       'reports' => ReportsPage(org: org),
       'customers' => CustomersPage(org: org),
+      'suppliers' => OperationalListPage(org: org, path: 'suppliers', title: 'تأمین‌کنندگان'),
+      'products' => OperationalListPage(org: org, path: 'products', title: 'کالا و خدمات'),
+      'warehouses' => OperationalListPage(org: org, path: 'warehouses', title: 'انبارها'),
+      'inventory' => OperationalListPage(org: org, path: 'stock', title: 'موجودی کالا'),
+      'cash-accounts' => OperationalListPage(org: org, path: 'cash-accounts', title: 'صندوق و بانک'),
+      'checks' => OperationalListPage(org: org, path: 'checks', title: 'چک‌ها'),
+      'sales' => OperationalListPage(org: org, path: 'sales', title: 'فروش'),
+      'purchases' => OperationalListPage(org: org, path: 'purchases', title: 'خرید'),
+      'fiscal-years' => OperationalListPage(org: org, path: 'fiscal-years', title: 'سال مالی'),
       'invoices' => InvoicesPage(org: org, onChanged: reload),
       'payments' => PaymentsPage(org: org, onChanged: reload),
       'settings' => SettingsPage(org: org),
@@ -187,6 +196,11 @@ class ReportPage extends StatelessWidget {
   );
 }
 
+class OperationalListPage extends StatelessWidget {
+  const OperationalListPage({required this.org,required this.path,required this.title,super.key});
+  final String org,path,title;
+  @override Widget build(BuildContext context)=>DataFrame(title:title,load:()=>AppScope.of(context).api.get(pathFor(org,path)));
+}
 class CustomersPage extends StatefulWidget {
   const CustomersPage({required this.org, super.key}); final String org;
   @override State<CustomersPage> createState() => _CustomersPageState();
