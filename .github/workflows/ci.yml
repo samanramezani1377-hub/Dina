@@ -162,7 +162,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: dina-app-release-apk
-          path: app/build/app/outputs/flutter-apk/app-debug.apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
   flutter-windows:
