@@ -65,10 +65,23 @@ Future<void> pay()async{try{await AppScope.of(context).api.post('/organizations/
 class SettingsPage extends StatelessWidget{const SettingsPage({required this.org,super.key});final String org;
 @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(20),children:[Card(child:ListTile(title:const Text('سازمان فعال'),subtitle:Text(org))),Card(child:ListTile(title:const Text('اشتراک'),onTap:()async{final d=await AppScope.of(c).api.get('/organizations/${org}/subscription');if(c.mounted)showDialog(context:c,builder:(_)=>AlertDialog(title:const Text('اشتراک'),content:Text(_s(d?['subscription'])),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('بستن'))]));}))]);}
 
-class _Frame extends StatelessWidget{const _Frame({required this.title,required this.load,this.create,this.formatter});final String title;final Future<JsonMap?> Function() load;final Widget? create;final List<Widget> Function(JsonMap)? formatter;
-@override Widget build(BuildContext c)=>FutureBuilder<JsonMap?>(future:load(),builder:(c,s){if(s.connectionState!=ConnectionState.done)return const Center(child:CircularProgressIndicator());if(s.hasError)return _ErrorView(error:s.error.toString(),retry:()=>c.findAncestorStateOfType<_FrameState>()?.retry());final d=s.data??{};final rows=formatter?.call(d)??_rows(d);return ListView(padding:const EdgeInsets.all(20),children:[Text(title,style:Theme.of(c).textTheme.headlineSmall),const SizedBox(height:12),if(create!=null)Card(child:Padding(padding:const EdgeInsets.all(14),child:create!)),const SizedBox(height:12),...rows]);}
-List<Widget> _rows(JsonMap d){final raw=d['items']??d['accounts'];final items=raw is List?raw.whereType<JsonMap>().toList():<JsonMap>[];if(items.isEmpty)return[const Card(child:ListTile(title:Text('داده‌ای ثبت نشده است.')))];return[for(final x in items)Card(child:ListTile(title:Text(_s(x['name']??x['invoice_no']??x['id'])),subtitle:Text(x.entries.take(5).map((e)=>'${e.key}: ${_s(e.value)}').join(' | ')))];}}
-class _FrameState extends State<_Frame>{void retry()=>setState((){});@override Widget build(BuildContext c)=>widget.build(c);}
+class _Frame extends StatefulWidget{
+ const _Frame({required this.title,required this.load,this.create,this.formatter});
+ final String title; final Future<JsonMap?> Function() load; final Widget? create; final List<Widget> Function(JsonMap)? formatter;
+ @override State<_Frame> createState()=>_FrameState();
+}
+class _FrameState extends State<_Frame>{
+ Future<JsonMap?>? future;
+ @override void initState(){super.initState();future=widget.load();}
+ void retry()=>setState(()=>future=widget.load());
+ @override Widget build(BuildContext c)=>FutureBuilder<JsonMap?>(future:future,builder:(c,s){
+  if(s.connectionState!=ConnectionState.done)return const Center(child:CircularProgressIndicator());
+  if(s.hasError)return _ErrorView(error:s.error.toString(),retry:retry);
+  final d=s.data??{};final rows=widget.formatter?.call(d)??_rows(d);
+  return ListView(padding:const EdgeInsets.all(20),children:[Text(widget.title,style:Theme.of(c).textTheme.headlineSmall),const SizedBox(height:12),if(widget.create!=null)Card(child:Padding(padding:const EdgeInsets.all(14),child:widget.create!)),const SizedBox(height:12),...rows]);
+ });
+ List<Widget> _rows(JsonMap d){final raw=d['items']??d['accounts'];final items=raw is List?raw.whereType<JsonMap>().toList():<JsonMap>[];if(items.isEmpty)return[const Card(child:ListTile(title:Text('داده‌ای ثبت نشده است.')))];return[for(final x in items)Card(child:ListTile(title:Text(_s(x['name']??x['invoice_no']??x['id'])),subtitle:Text(x.entries.take(5).map((e)=>e.key + ': ' + _s(e.value)).join(' | ')))];}
+}
 
 class _ErrorView extends StatelessWidget{const _ErrorView({required this.error,required this.retry});final String error;final VoidCallback retry;@override Widget build(BuildContext c)=>Center(child:Padding(padding:const EdgeInsets.all(24),child:Column(mainAxisSize:MainAxisSize.min,children:[const Icon(Icons.error_outline,size:48),Text('بارگذاری ناموفق بود'),Text(error,textAlign:TextAlign.center),FilledButton(onPressed:retry,child:const Text('تلاش دوباره'))])));}
 void _snack(BuildContext c,String m)=>ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text(m)));
