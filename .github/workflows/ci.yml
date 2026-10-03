@@ -146,14 +146,14 @@ jobs:
         run: flutter test
       - name: Build Android APK
         working-directory: app
-        run: flutter build apk --debug
+        run: flutter build apk --release
       # A build step that "succeeds" without producing a binary must not be
       # reported as green.
       - name: Verify APK artifact exists
         working-directory: app
         run: |
           set -euo pipefail
-          apk=build/app/outputs/flutter-apk/app-debug.apk
+          apk=build/app/outputs/flutter-apk/app-release.apk
           if [ ! -f "$apk" ]; then
             echo "Expected APK was not produced at $apk" >&2
             exit 1
@@ -161,7 +161,7 @@ jobs:
           ls -l "$apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: dina-app-debug-apk
+          name: dina-app-release-apk
           path: app/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
 
@@ -202,12 +202,12 @@ jobs:
         run: flutter pub get
       - name: Build Windows
         working-directory: app
-        run: flutter build windows --debug
+        run: flutter build windows --release
       - name: Verify Windows artifact exists
         working-directory: app
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = 'build/windows/x64/runner/Debug/dina_app.exe'
+          $exe = 'build/windows/x64/runner/Release/dina_app.exe'
           if (-not (Test-Path $exe)) {
             Write-Error "Expected Windows binary was not produced at $exe"
             exit 1
@@ -215,6 +215,6 @@ jobs:
           Get-Item $exe | Format-List Name, Length
       - uses: actions/upload-artifact@v4
         with:
-          name: dina-app-windows-debug
-          path: app/build/windows/x64/runner/Debug/
+          name: dina-app-windows-release
+          path: app/build/windows/x64/runner/Release/
           if-no-files-found: error
