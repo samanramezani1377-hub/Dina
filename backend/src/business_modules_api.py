@@ -59,15 +59,21 @@ class CheckIn(BaseModel):
 def create_fiscal_year(organization_id:int,p:FiscalIn,request:Request,c:Caller=Depends(write_caller)):
     if p.ends_on<p.starts_on: raise ApiError(ErrorCode.VALIDATION_ERROR,"fiscal year dates are invalid")
     with connect(request) as cn:
+        overlap=cn.execute("SELECT 1 FROM fiscal_years WHERE organization_id=%s AND starts_on<=%s AND ends_on>=%s LIMIT 1",(organization_id,p.ends_on,p.starts_on)).fetchone()
+        if overlap: raise ApiError(ErrorCode.VALIDATION_ERROR,"fiscal year overlaps an existing fiscal year")
         r=cn.execute("INSERT INTO fiscal_years(organization_id,name,starts_on,ends_on) VALUES(%s,%s,%s,%s) RETURNING *",(organization_id,p.name,p.starts_on,p.ends_on)).fetchone()
     return _j(dict(r))
 @router.get("/{organization_id}/fiscal-years")
 def fiscal_years(organization_id:int,request:Request,c:Caller=Depends(caller)): return {"items":_j(q(request,"SELECT * FROM fiscal_years WHERE organization_id=%s ORDER BY starts_on",(organization_id,)))}
 @router.post("/{organization_id}/fiscal-years/{year_id}/close")
 def close_year(organization_id:int,year_id:int,request:Request,c:Caller=Depends(write_caller)):
-    with __import__("psycopg").connect(db(request),row_factory=__import__("psycopg").rows.dict_row) as cn:
-        r=cn.execute("UPDATE fiscal_years SET status='closed' WHERE id=%s AND organization_id=%s AND status='open' RETURNING *",(year_id,organization_id)).fetchone()
-    if not r: raise ApiError(ErrorCode.NOT_FOUND,"fiscal year not found or already closed")
+    with connect(request) as cn:
+        year=cn.execute("SELECT * FROM fiscal_years WHERE id=%s AND organization_id=%s FOR UPDATE",(year_id,organization_id)).fetchone()
+        if not year: raise ApiError(ErrorCode.NOT_FOUND,"fiscal year not found")
+        if year["status"]!="open": raise ApiError(ErrorCode.VALIDATION_ERROR,"fiscal year is already closed")
+        pending=cn.execute("SELECT 1 FROM sales WHERE organization_id=%s AND issue_date BETWEEN %s AND %s AND status='draft' UNION ALL SELECT 1 FROM purchases WHERE organization_id=%s AND issue_date BETWEEN %s AND %s AND status='draft' LIMIT 1",(organization_id,year["starts_on"],year["ends_on"],organization_id,year["starts_on"],year["ends_on"])).fetchone()
+        if pending: raise ApiError(ErrorCode.VALIDATION_ERROR,"draft sales or purchases exist in this fiscal year")
+        r=cn.execute("UPDATE fiscal_years SET status='closed' WHERE id=%s AND organization_id=%s RETURNING *",(year_id,organization_id)).fetchone()
     return _j(dict(r))
 
 @router.post("/{organization_id}/suppliers",status_code=201)
