@@ -28,6 +28,7 @@ from .auth_api import router as auth_router
 from .config import get_settings
 from .errors import ApiError, register_error_handlers
 from .error_log_api import router as error_log_router
+from .management_api import router as management_router
 from .ledger_api import router as ledger_router
 from .operations_api import router as operations_router
 from .models import JournalLine
@@ -58,7 +59,8 @@ async def lifespan(app: FastAPI):
         app.state.accounting_store = persistent
         app.state.users = persistent
         app.state.business_store = BusinessStore(app.state.settings.database_url)
-        set_default_store(PostgresAuditStore(lambda: _audit_connect(app.state.settings.database_url)))
+        app.state.audit_store = PostgresAuditStore(lambda: _audit_connect(app.state.settings.database_url))
+        set_default_store(app.state.audit_store)
     yield
 
 
@@ -67,6 +69,7 @@ app.include_router(ledger_router)
 app.include_router(auth_router)
 app.include_router(operations_router)
 app.include_router(error_log_router)
+app.include_router(management_router)
 # Handlers are dispatched by exception type at request time, so this can sit
 # after the routers without changing which failure goes where.
 register_error_handlers(app)
