@@ -139,10 +139,16 @@ def cash_accounts(organization_id:int,request:Request,c:Caller=Depends(caller)):
 @router.post("/{organization_id}/cash-transactions",status_code=201)
 def cash_tx(organization_id:int,p:CashTxIn,request:Request,c:Caller=Depends(write_caller)):
     if p.direction not in {"in","out"}: raise ApiError(ErrorCode.VALIDATION_ERROR,"invalid direction")
-    with __import__("psycopg").connect(db(request),row_factory=__import__("psycopg").rows.dict_row) as cn:
-        ok=cn.execute("SELECT 1 FROM cash_accounts WHERE id=%s AND organization_id=%s",(p.cash_account_id,organization_id)).fetchone()
-        if not ok: raise ApiError(ErrorCode.NOT_FOUND,"cash account not found")
-        r=cn.execute("INSERT INTO cash_transactions(organization_id,cash_account_id,amount,direction,description,reference,transaction_date,counter_account_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.cash_account_id,p.amount,p.direction,p.description,p.reference,p.transaction_date,p.counter_account_id)).fetchone()
+    with connect(request) as cn:
+        account=cn.execute("SELECT * FROM cash_accounts WHERE id=%s AND organization_id=%s FOR UPDATE",(p.cash_account_id,organization_id)).fetchone()
+        if not account: raise ApiError(ErrorCode.NOT_FOUND,"cash account not found")
+        journal_id=None
+        if p.counter_account_id:
+            if not account["account_id"]: raise ApiError(ErrorCode.VALIDATION_ERROR,"cash account must be linked to a ledger account")
+            if not cn.execute("SELECT 1 FROM accounts WHERE id=%s AND organization_id=%s",(p.counter_account_id,organization_id)).fetchone(): raise ApiError(ErrorCode.NOT_FOUND,"counter account not found")
+            lines=[JournalLine(account["account_id"],p.amount,Decimal("0")),JournalLine(p.counter_account_id,Decimal("0"),p.amount)] if p.direction=="in" else [JournalLine(p.counter_account_id,p.amount,Decimal("0")),JournalLine(account["account_id"],Decimal("0"),p.amount)]
+            journal_id=_add_entry(cn,organization_id,p.reference or f"cash-{p.cash_account_id}",p.description,p.transaction_date,lines)
+        r=cn.execute("INSERT INTO cash_transactions(organization_id,cash_account_id,amount,direction,description,reference,transaction_date,counter_account_id,journal_entry_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.cash_account_id,p.amount,p.direction,p.description,p.reference,p.transaction_date,p.counter_account_id,journal_id)).fetchone()
     return _j(dict(r))
 @router.get("/{organization_id}/cash-accounts/{cash_account_id}/balance")
 def cash_balance(organization_id:int,cash_account_id:int,request:Request,c:Caller=Depends(caller)):
