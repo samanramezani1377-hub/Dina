@@ -14,13 +14,13 @@ class ApiClient {
   ApiClient({required this.baseUrl,required HttpTransport transport,String? Function()? tokenProvider,Duration timeout=const Duration(seconds:15)})
       : _transport=transport,_tokenProvider=tokenProvider??(()=>null),_timeout=timeout;
   final String baseUrl; final HttpTransport _transport; final String? Function() _tokenProvider; final Duration _timeout;
-  Future<JsonMap?> get(String path)=>_send('GET',path);
+  Future<JsonMap?> get(String path,{Map<String,String>? query})=>_send('GET',_withQuery(path,query));
   Future<JsonMap?> post(String path,{JsonMap? body,Map<String,String>? extraHeaders})=>_send('POST',path,body:body,extraHeaders:extraHeaders);
   Future<JsonMap?> put(String path,{JsonMap? body})=>_send('PUT',path,body:body);
   Future<JsonMap?> patch(String path,{JsonMap? body})=>_send('PATCH',path,body:body);
   Future<JsonMap?> delete(String path)=>_send('DELETE',path);
 
-  Future<JsonMap?> _send(String method,String path,{JsonMap? body,Map<String,String>? extraHeaders}) async {
+  String _withQuery(String path,Map<String,String>? query) {\n    if(query==null||query.isEmpty)return path;\n    final uri=Uri.parse(path);\n    return uri.replace(queryParameters:{...uri.queryParameters,...query}).toString();\n  }\n\n  Future<JsonMap?> _send(String method,String path,{JsonMap? body,Map<String,String>? extraHeaders}) async {
     final headers=<String,String>{'accept':'application/json'};
     final token=_tokenProvider();
     if(token!=null&&token.isNotEmpty)headers['authorization']='Bearer $token';
