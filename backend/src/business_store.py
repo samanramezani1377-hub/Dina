@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from typing import Any
+import uuid
 import psycopg
 from psycopg.rows import dict_row
 from .models import Organization, JournalLine
@@ -171,7 +172,7 @@ class BusinessStore:
                     """INSERT INTO journal_entries
                        (organization_id,document_no,description,status,entry_date,posted_at)
                        VALUES (%s,%s,%s,'posted',CURRENT_DATE,NOW()) RETURNING id""",
-                    (org, f"PAY-{invoice_id}-{idempotency_key or 'manual'}", f"Payment for invoice {inv['invoice_no']}")
+                    (org, f"PAY-{invoice_id}-{uuid.uuid4().hex[:12]}", f"Payment for invoice {inv['invoice_no']}")
                 ).fetchone()
                 journal_id = int(j["id"])
                 for line in lines:
