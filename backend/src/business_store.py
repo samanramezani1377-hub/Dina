@@ -99,29 +99,18 @@ class BusinessStore:
         if self._memory: return next((x for x in self._invoices if x["id"] == invoice_id and x["organization_id"] == org), None)
         with self._connect() as conn: return conn.execute("SELECT * FROM invoices WHERE id=%s AND organization_id=%s",(invoice_id,org)).fetchone()
     def record_payment(self, org: int, invoice_id: int, amount: Decimal, method: str, reference: str | None, idempotency_key: str | None = None):
-        inv = self.invoice(org, invoice_id)
-        if inv is None:
-            raise KeyError("invoice")
-        if amount <= 0 or amount > Decimal(inv["total"]) - Decimal(inv["paid"]):
-            raise ValueError("payment exceeds invoice balance")
-        if idempotency_key and self._memory:
-            existing_id = self._payment_keys.get((org, idempotency_key))
-            if existing_id is not None:
-                existing = next(p for p in self._payments if p["id"] == existing_id)
-                return existing, inv
-        if idempotency_key and not self._memory:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT payment_id FROM payment_idempotency WHERE organization_id=%s AND idempotency_key=%s",
-                    (org, idempotency_key),
-                ).fetchone()
-                if row:
-                    payment = conn.execute(
-                        "SELECT * FROM payments WHERE id=%s AND organization_id=%s",
-                        (row["payment_id"], org),
-                    ).fetchone()
-                    return payment, inv
+        """Record a payment atomically and make retries safe under concurrency."""
         if self._memory:
+            inv = self.invoice(org, invoice_id)
+            if inv is None:
+                raise KeyError("invoice")
+            if amount <= 0 or amount > Decimal(inv["total"]) - Decimal(inv["paid"]):
+                raise ValueError("payment exceeds invoice balance")
+            if idempotency_key:
+                existing_id = self._payment_keys.get((org, idempotency_key))
+                if existing_id is not None:
+                    existing = next(p for p in self._payments if p["id"] == existing_id)
+                    return existing, inv
             payment = {"id": self._ids["payment"], "organization_id": org, "invoice_id": invoice_id, "amount": amount, "method": method, "reference": reference}
             self._ids["payment"] += 1
             self._payments.append(payment)
@@ -130,7 +119,37 @@ class BusinessStore:
             inv["paid"] = Decimal(inv["paid"]) + amount
             inv["status"] = "paid" if inv["paid"] == inv["total"] else "partial"
             return payment, inv
+
         with self._connect() as conn:
+            # Serialize retries for the same organization/key and the balance
+            # update for the same invoice. The transaction ends only after all
+            # three rows are durable.
+            if idempotency_key:
+                conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s), %s)", (idempotency_key, org))
+                existing = conn.execute(
+                    "SELECT payment_id FROM payment_idempotency WHERE organization_id=%s AND idempotency_key=%s FOR SHARE",
+                    (org, idempotency_key),
+                ).fetchone()
+                if existing:
+                    payment = conn.execute(
+                        "SELECT * FROM payments WHERE id=%s AND organization_id=%s",
+                        (existing["payment_id"], org),
+                    ).fetchone()
+                    inv = conn.execute("SELECT * FROM invoices WHERE id=%s AND organization_id=%s", (invoice_id, org)).fetchone()
+                    if payment is None or inv is None:
+                        raise KeyError("payment")
+                    return payment, inv
+
+            inv = conn.execute(
+                "SELECT * FROM invoices WHERE id=%s AND organization_id=%s FOR UPDATE",
+                (invoice_id, org),
+            ).fetchone()
+            if inv is None:
+                raise KeyError("invoice")
+            remaining = Decimal(inv["total"]) - Decimal(inv["paid"])
+            if amount <= 0 or amount > remaining:
+                raise ValueError("payment exceeds invoice balance")
+
             payment = conn.execute(
                 "INSERT INTO payments(organization_id,invoice_id,amount,method,reference) VALUES(%s,%s,%s,%s,%s) RETURNING *",
                 (org, invoice_id, amount, method, reference),
@@ -142,11 +161,11 @@ class BusinessStore:
                 )
             paid = Decimal(inv["paid"]) + amount
             status = "paid" if paid == Decimal(inv["total"]) else "partial"
-            inv = conn.execute(
+            updated = conn.execute(
                 "UPDATE invoices SET paid=%s,status=%s WHERE id=%s AND organization_id=%s RETURNING *",
                 (paid, status, invoice_id, org),
             ).fetchone()
-        return payment, inv
+            return payment, updated
 
     def subscription(self, org: int):
         if self._memory: return next((x for x in reversed(self._subscriptions) if x["organization_id"] == org), None)
