@@ -1,4 +1,4 @@
-from backend.src.error_log import redact
+from src.error_log import redact
 
 def test_error_log_redacts_credentials_and_nested_secrets():
     payload = {
