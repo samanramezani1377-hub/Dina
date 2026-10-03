@@ -170,7 +170,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey<String>('bottom-more')));
       await tester.pumpAndSettle();
       final Finder settingsItem = find.byKey(const ValueKey<String>('more-settings'));
-      await tester.ensureVisible(settingsItem);
+      await tester.scrollUntilVisible(settingsItem, 300.0);
       await tester.tap(settingsItem);
       await tester.pumpAndSettle();
 
