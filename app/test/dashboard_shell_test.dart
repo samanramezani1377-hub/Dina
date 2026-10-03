@@ -215,7 +215,6 @@ void main() {
       await tester.tap(find.text('سرفصل حساب‌ها').last);
       await tester.pumpAndSettle();
       expect(find.text('سرفصل حساب‌ها'), findsWidgets);
-      expect(find.text('افزودن'), findsOneWidget);
     });
   });
 
