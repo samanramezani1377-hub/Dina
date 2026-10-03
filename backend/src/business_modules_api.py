@@ -183,3 +183,42 @@ def create_purchase(organization_id:int,p:PurchaseDocumentIn,request:Request,c:C
 @router.get("/{organization_id}/purchases")
 def purchases(organization_id:int,request:Request,c:Caller=Depends(caller)):
     return {"items":_j(q(request,"SELECT * FROM purchases WHERE organization_id=%s ORDER BY issue_date DESC,id DESC",(organization_id,)))}
+
+
+class DocumentPostIn(BaseModel):
+    receivable_or_payable_account_id:int
+    revenue_or_inventory_account_id:int
+    tax_account_id:int|None=None
+    discount_account_id:int|None=None
+
+def _post_document(request, organization_id, document_table, line_table, document_id, p, is_sale):
+    store=request.app.state.accounting_store
+    with connect(request) as cn:
+        doc=cn.execute(f"SELECT * FROM {document_table} WHERE id=%s AND organization_id=%s FOR UPDATE",(document_id,organization_id)).fetchone()
+        if not doc: raise ApiError(ErrorCode.NOT_FOUND,"document not found")
+        if doc["status"]!="draft": raise ApiError(ErrorCode.VALIDATION_ERROR,"document is not in draft status")
+        if doc["journal_entry_id"]: raise ApiError(ErrorCode.VALIDATION_ERROR,"document is already linked to a journal")
+        if p.revenue_or_inventory_account_id==p.receivable_or_payable_account_id: raise ApiError(ErrorCode.VALIDATION_ERROR,"accounts must be different")
+        lines=[JournalLine(p.receivable_or_payable_account_id, doc["total"], Decimal("0")) if is_sale else JournalLine(p.revenue_or_inventory_account_id, doc["total"], Decimal("0"))]
+        if is_sale:
+            lines=[JournalLine(p.receivable_or_payable_account_id,doc["total"],Decimal("0")),JournalLine(p.revenue_or_inventory_account_id,Decimal("0"),doc["subtotal"]-doc["discount"])]
+        else:
+            lines=[JournalLine(p.revenue_or_inventory_account_id,doc["subtotal"]-doc["discount"],Decimal("0")),JournalLine(p.receivable_or_payable_account_id,Decimal("0"),doc["total"])]
+        if doc["tax"]>0:
+            if not p.tax_account_id: raise ApiError(ErrorCode.VALIDATION_ERROR,"tax account is required when document has tax")
+            if is_sale: lines.append(JournalLine(p.tax_account_id,Decimal("0"),doc["tax"]))
+            else: lines.append(JournalLine(p.tax_account_id,doc["tax"],Decimal("0")))
+        if doc["discount"]>0 and p.discount_account_id:
+            if is_sale: lines.append(JournalLine(p.discount_account_id,doc["discount"],Decimal("0")))
+            else: lines.append(JournalLine(p.discount_account_id,Decimal("0"),doc["discount"]))
+        entry=store.add_entry(organization_id,doc["invoice_no"],("Sale " if is_sale else "Purchase ")+doc["invoice_no"],doc["issue_date"],lines,status="posted")
+        cn.execute(f"UPDATE {document_table} SET status='posted',journal_entry_id=%s WHERE id=%s AND organization_id=%s",(entry.id,document_id,organization_id))
+    return _j({"document_id":document_id,"status":"posted","journal_entry_id":entry.id})
+
+@router.post("/{organization_id}/sales/{sale_id}/post")
+def post_sale(organization_id:int,sale_id:int,p:DocumentPostIn,request:Request,c:Caller=Depends(write_caller)):
+    return _post_document(request,organization_id,"sales","sale_lines",sale_id,p,True)
+
+@router.post("/{organization_id}/purchases/{purchase_id}/post")
+def post_purchase(organization_id:int,purchase_id:int,p:DocumentPostIn,request:Request,c:Caller=Depends(write_caller)):
+    return _post_document(request,organization_id,"purchases","purchase_lines",purchase_id,p,False)
