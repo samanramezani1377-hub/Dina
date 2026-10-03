@@ -145,7 +145,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey<String>('bottom-journal-entry')));
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey<String>('placeholder-journal-entry')),
+        find.text('ثبت سند حسابداری'),
         findsOneWidget,
       );
 
@@ -173,7 +173,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.byKey(const ValueKey<String>('placeholder-settings')),
+        find.text('سازمان فعال'),
         findsOneWidget,
       );
       // Settings is not one of the bar's own entries, so the bar falls back to
@@ -185,8 +185,8 @@ void main() {
     });
   });
 
-  group('honesty about what exists', () {
-    testWidgets('every unimplemented destination says so and shows no figures', (
+  group('implemented workspaces', () {
+    testWidgets('the dashboard renders real report fields rather than a placeholder', (
       WidgetTester tester,
     ) async {
       await tester.pumpDina(
@@ -194,34 +194,13 @@ void main() {
         store: signedInStore(),
         surfaceSize: _desktop,
       );
-
-      final List<ShellDestination> unimplemented = ShellDestinations.all
-          .where((ShellDestination d) => !d.implemented)
-          .toList();
-      expect(unimplemented, isNotEmpty);
-
-      for (final ShellDestination destination in unimplemented) {
-        await tester.tap(find.text(destination.label).last);
-        await tester.pumpAndSettle();
-
-        expect(
-          find.byKey(ValueKey<String>('placeholder-${destination.id}')),
-          findsOneWidget,
-          reason: '${destination.label} must render its placeholder',
-        );
-        expect(
-          find.text('هنوز پیاده‌سازی نشده است'),
-          findsOneWidget,
-          reason: '${destination.label} must be marked as not implemented',
-        );
-        expect(
-          find.text('هیچ داده‌ای برای این بخش بارگذاری نشده است.'),
-          findsOneWidget,
-        );
-      }
+      expect(find.byKey(const ValueKey<String>('dashboard-home')), findsOneWidget);
+      expect(find.text('جمع بدهکار'), findsOneWidget);
+      expect(find.text('جمع بستانکار'), findsOneWidget);
+      expect(find.text('0.00'), findsWidgets);
     });
 
-    testWidgets('the dashboard shows an empty state and no invented balance', (
+    testWidgets('accounting destinations render their functional screens', (
       WidgetTester tester,
     ) async {
       await tester.pumpDina(
@@ -229,26 +208,15 @@ void main() {
         store: signedInStore(),
         surfaceSize: _desktop,
       );
+      await tester.tap(find.text('سند حسابداری').last);
+      await tester.pumpAndSettle();
+      expect(find.text('ثبت سند حسابداری'), findsOneWidget);
 
-      expect(find.byKey(const ValueKey<String>('dashboard-home')), findsOneWidget);
-      expect(find.text('هنوز داده‌ای برای نمایش وجود ندارد'), findsOneWidget);
-
-      // The only way a fabricated figure could reach this screen is if one were
-      // hardcoded, so assert that the text of the page carries no digits.
-      final Finder dashboard = find.byKey(const ValueKey<String>('dashboard-home'));
-      final Iterable<String> texts = tester
-          .widgetList<Text>(
-            find.descendant(of: dashboard, matching: find.byType(Text)),
-          )
-          .map((Text t) => t.data ?? '')
-          .where((String t) => t.isNotEmpty);
-      for (final String text in texts) {
-        expect(
-          RegExp(r'[0-9۰-۹]').hasMatch(text),
-          isFalse,
-          reason: 'The dashboard must not display "$text"',
-        );
-      }
+      await tester.tap(find.text('سرفصل حساب‌ها').last);
+      await tester.pumpAndSettle();
+      expect(find.text('سرفصل حساب‌ها'), findsWidgets);
+      expect(find.text('افزودن'), findsOneWidget);
     });
   });
+
 }
