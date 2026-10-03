@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../app/app_scope.dart';
 import '../../../app/api/api_client.dart';
+import 'error_center_page.dart';
 
 String valueOf(Object? value) => value?.toString() ?? '';
 String pathFor(String org, String tail) => '/organizations/$org/$tail';
@@ -76,6 +77,7 @@ class _AccountingWorkspaceState extends State<AccountingWorkspace> {
       'invoices' => InvoicesPage(org: org, onChanged: reload),
       'payments' => PaymentsPage(org: org, onChanged: reload),
       'settings' => SettingsPage(org: org),
+      'error-center' => ErrorCenterPage(org: org),
       _ => const SizedBox.shrink(),
     };
     return KeyedSubtree(key: ValueKey<int>(reloadKey), child: page);
