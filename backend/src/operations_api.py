@@ -90,6 +90,8 @@ class PaymentInput(BaseModel):
     amount: Decimal = Field(gt=0)
     method: str = Field(default="other", max_length=50)
     reference: str | None = Field(default=None, max_length=200)
+    cash_account_id: int | None = None
+    receivable_account_id: int | None = None
 class SubscriptionInput(BaseModel):
     plan: str = Field(min_length=1, max_length=100)
     status: str = "active"
@@ -227,7 +229,7 @@ def pay_invoice(organization_id: int, invoice_id: int, payload: PaymentInput, re
                 caller: Caller = Depends(accounting_caller)):
     try:
         payment, invoice = request.app.state.business_store.record_payment(
-            organization_id, invoice_id, payload.amount, payload.method, payload.reference, request.headers.get('Idempotency-Key')
+            organization_id, invoice_id, payload.amount, payload.method, payload.reference, request.headers.get("Idempotency-Key"), payload.cash_account_id, payload.receivable_account_id
         )
     except KeyError as exc:
         raise ApiError(ErrorCode.NOT_FOUND, "invoice does not exist in this organization") from exc
