@@ -20,7 +20,9 @@ class ApiClient {
     final headers=<String,String>{'accept':'application/json'}; final token=_tokenProvider();
     if(token!=null&&token.isNotEmpty) headers['authorization']='Bearer $token';
     if(body!=null) headers['content-type']='application/json';
-    HttpTextResponse response;\n    try {\n      response=await _transport.send(method:method,url:Uri.parse('$baseUrl$path'),headers:headers,body:body==null?null:jsonEncode(body)).timeout(_timeout);\n    } on ApiException { rethrow; } catch (_) { throw const NetworkException(); }
+    HttpTextResponse response;
+    try {
+      response=await _transport.send(method:method,url:Uri.parse('$baseUrl$path'),headers:headers,body:body==null?null:jsonEncode(body)).timeout(_timeout);\n    } on ApiException { rethrow; } catch (_) { throw const NetworkException(); }
     Object? decoded;
     if(response.body.trim().isNotEmpty){try{decoded=jsonDecode(response.body);}on FormatException{throw const ApiException(message:'پاسخ سرور قابل خواندن نبود.',code:'malformed_response');}}
     if(response.statusCode>=200&&response.statusCode<300)return decoded is JsonMap?decoded:<String,Object?>{};
