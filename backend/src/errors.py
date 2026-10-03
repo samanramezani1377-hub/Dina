@@ -239,12 +239,35 @@ def error_response(
     )
 
 
+def _log_error(request: Request, code: str, message: str, http_status: int, details: Mapping[str, Any] | None = None, exc: BaseException | None = None, level: str = "error", request_id: str | None = None) -> None:
+    """Persist a sanitized diagnostic record; logging can never change the response."""
+    try:
+        from .error_log import record_error
+        rid = request_id or correlation_id(request)
+        org_id = None
+        parts = request.url.path.strip("/").split("/")
+        try:
+            if "organizations" in parts:
+                org_id = int(parts[parts.index("organizations") + 1])
+        except (ValueError, IndexError):
+            pass
+        settings = getattr(request.app.state, "settings", None)
+        if settings is not None and getattr(settings, "database_url", None):
+            record_error(settings.database_url, correlation_id=rid, code=code, message=message,
+                         http_status=http_status, method=request.method, path=request.url.path,
+                         organization_id=org_id, ip_address=request.client.host if request.client else None,
+                         user_agent=request.headers.get("user-agent"), details=details, exception=exc, level=level)
+    except Exception:
+        logger.exception("error-center logging failed")
+
 def _api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     """Serve a failure that already carries a registered code."""
     if exc.code not in ERROR_CODE_STATUS:
         logger.warning(
             "error raised with unregistered code %r (%s)", exc.code, exc.message
         )
+    request_id = correlation_id(request)
+    _log_error(request, exc.code, exc.message, exc.status_code, exc.details, exc, request_id=request_id)
     return error_response(
         request,
         exc.code,
@@ -252,6 +275,7 @@ def _api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
         exc.details,
         status_code=exc.status_code,
         headers=exc.headers,
+        request_id=request_id,
     )
 
 
@@ -267,7 +291,9 @@ def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JS
         return error_response(request, detail, detail, status_code=exc.status_code)
     code = _code_for_status(exc.status_code)
     message = detail if isinstance(detail, str) and detail.strip() else code
-    return error_response(request, code, message, status_code=exc.status_code)
+    request_id = correlation_id(request)
+    _log_error(request, code, message, exc.status_code, {"http_exception": True}, exc, request_id=request_id)
+    return error_response(request, code, message, status_code=exc.status_code, request_id=request_id)
 
 
 def _code_for_status(status_code: int) -> str:
@@ -305,12 +331,17 @@ def _validation_error_handler(request: Request, exc: RequestValidationError) -> 
                 "type": error.get("type", "value_error"),
             }
         )
+    details = {"fields": fields}
+    request_id = correlation_id(request)
+    _log_error(request, ErrorCode.VALIDATION_ERROR, "the request body or query string is invalid",
+               status.HTTP_422_UNPROCESSABLE_ENTITY, details, exc, request_id=request_id)
     return error_response(
         request,
         ErrorCode.VALIDATION_ERROR,
         "the request body or query string is invalid",
-        {"fields": fields},
+        details,
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        request_id=request_id,
     )
 
 
@@ -334,6 +365,8 @@ def _unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id,
         exc_info=exc,
     )
+    _log_error(request, ErrorCode.INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE, 500,
+               {"correlation_id": request_id}, exc, level="critical", request_id=request_id)
     return error_response(
         request,
         ErrorCode.INTERNAL_ERROR,
