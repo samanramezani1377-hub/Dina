@@ -9,8 +9,8 @@ class ManagementPage extends StatefulWidget {
   @override State<ManagementPage> createState()=>_ManagementPageState();
 }
 class _ManagementPageState extends State<ManagementPage> {
-  Future<JsonMap?> subscription()=>AppScope.of(context).api.get('/organizations/'+widget.org+'/subscription');
-  Future<JsonMap?> audit()=>AppScope.of(context).api.get('/organizations/'+widget.org+'/audit');
+  Future<JsonMap?> subscription()=>AppScope.of(context).api.get('/organizations/${widget.org}/subscription');
+  Future<JsonMap?> audit()=>AppScope.of(context).api.get('/organizations/${widget.org}/audit');
   String v(Object? x)=>x?.toString()??'—';
   @override Widget build(BuildContext context)=>ListView(padding:const EdgeInsets.all(20),children:[
     Text('مدیریت سازمان',style:Theme.of(context).textTheme.headlineSmall),
@@ -50,7 +50,7 @@ class _AuditDialog extends StatelessWidget{
     if(s.hasError)return Text(s.error.toString());
     final raw=s.data?['items'];final items=raw is List?raw.whereType<JsonMap>().toList():<JsonMap>[];
     return ListView(children:[for(final x in items.reversed)ListTile(
-      leading:const Icon(Icons.event_note),title:Text(v(x['action'])),subtitle:Text(v(x['occurred_at'])+' • '+v(x['entity'])+' #'+v(x['entity_id'])),
+      leading:const Icon(Icons.event_note),title:Text(v(x['action'])),subtitle:Text('${v(x['occurred_at'])} • ${v(x['entity'])} #${v(x['entity_id'])}'),
     )]);
   })),actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('بستن'))]);
 }
