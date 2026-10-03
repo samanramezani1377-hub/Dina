@@ -294,7 +294,7 @@ class _BottomNavigation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<ShellDestination> primary = ShellDestinations.primaryDestinations;
+    const List<ShellDestination> primary = ShellDestinations.primaryDestinations;
     final int selectedIndex = primary.indexWhere(
       (ShellDestination d) => d.id == selectedId,
     );
