@@ -4,7 +4,7 @@ import '../../../app/app_scope.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../organizations/domain/organization.dart';
-import '../domain/shell_destination.dart';
+import '../domain/shell_destinations_v2.dart';
 import 'dashboard_pages.dart';
 
 /// The authenticated application shell.
