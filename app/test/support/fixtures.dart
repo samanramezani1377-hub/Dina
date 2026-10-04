@@ -28,6 +28,17 @@ Map<String, Object?> organizationsJson(List<String> names) =>
     };
 
 /// Same, with explicit ids, for the cases where the id matters.
+Map<String, Object?> trialBalanceJson() => <String, Object?>{
+  'organization_id': 1,
+  'is_balanced': true,
+  'totals': <String, Object?>{
+    'debit_total': '0.00',
+    'credit_total': '0.00',
+    'difference': '0.00',
+  },
+  'accounts': <Object?>[],
+};
+
 Map<String, Object?> organizationsWithIds(Map<String, String> byId) =>
     <String, Object?>{
       'organizations': <Object?>[
