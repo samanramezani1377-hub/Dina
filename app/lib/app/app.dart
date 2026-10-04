@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -56,14 +57,15 @@ class _DinaAppState extends State<DinaApp> {
         textDirection: TextDirection.rtl,
         child: FTheme(
           data: Theme.brightnessOf(context) == Brightness.dark
-              ? AppTheme.foruiDark()
-              : AppTheme.foruiLight(),
+              ? (const <TargetPlatform>{TargetPlatform.android, TargetPlatform.iOS, TargetPlatform.fuchsia}.contains(defaultTargetPlatform) ? FTheme.neutral.dark.touch : AppTheme.foruiDark())
+              : (const <TargetPlatform>{TargetPlatform.android, TargetPlatform.iOS, TargetPlatform.fuchsia}.contains(defaultTargetPlatform) ? FTheme.neutral.light.touch : AppTheme.foruiLight()),
           child: FTooltipGroup(child: child ?? const SizedBox.shrink()),
         ),
       ),
       locale: AppTheme.locale, supportedLocales: AppTheme.supportedLocales,
       localizationsDelegates: const <LocalizationsDelegate<Object?>>[
         GlobalMaterialLocalizations.delegate, GlobalWidgetsLocalizations.delegate, GlobalCupertinoLocalizations.delegate,
+        ...FLocalizations.localizationsDelegates,
       ],
       home: const AuthGate(),
     ),
