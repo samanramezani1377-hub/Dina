@@ -61,7 +61,7 @@ class _DashboardShellState extends State<DashboardShell> {
       child: CallbackShortcuts(
         bindings: shortcuts,
         child: LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
+          builder: (BuildContext context, BoxConstraints constraints) {
         final bool wide = Breakpoints.isWide(constraints.maxWidth);
         return Scaffold(
           appBar: AppBar(
@@ -105,8 +105,8 @@ class _DashboardShellState extends State<DashboardShell> {
                   onSelect: _select,
                   onMore: () => _showOverflowSheet(context),
                 ),
-        );
-      },
+          );
+        },
       ),
     );
   }
