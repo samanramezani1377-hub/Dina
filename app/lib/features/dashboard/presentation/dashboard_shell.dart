@@ -52,7 +52,7 @@ class _DashboardShellState extends State<DashboardShell> {
       SingleActivator(LogicalKeyboardKey.keyJ, shift: true): () => _select('journal-entry'),
       SingleActivator(LogicalKeyboardKey.keyX, control: true): () => _select('inventory'),
       SingleActivator(LogicalKeyboardKey.f12): () => _select('reports'),
-      SingleActivator(LogicalKeyboardKey.keyT, alt: true): () => _select('tax'),
+      SingleActivator(LogicalKeyboardKey.keyT, alt: true): () => _select('settings'),
       SingleActivator(LogicalKeyboardKey.keyS, alt: true): () => _select('settings'),
       SingleActivator(LogicalKeyboardKey.escape): () => _select('dashboard'),
     };
