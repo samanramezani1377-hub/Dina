@@ -1,6 +1,6 @@
 """Real HTTP E2E against the persistent Dina staging backend."""
 from __future__ import annotations
-import os, sys
+import os, sys, time
 from decimal import Decimal
 import httpx
 
@@ -38,7 +38,7 @@ def main() -> None:
             f"{BASE}/api/v1/organizations/{organization_id}/journals",
             headers=headers,
             json={
-                "document_no": "E2E-REAL-001",
+                "document_no": f"E2E-REAL-{int(time.time())}",
                 "description": "E2E عملیات حسابداری واقعی",
                 "entry_date": "2026-10-05",
                 "lines": [
