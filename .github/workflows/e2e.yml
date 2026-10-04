@@ -1,14 +1,13 @@
 name: Dina E2E — real backend + Android APK
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
   smoke-and-apk:
     name: Real backend, public tunnel and test APK
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     services:
       postgres:
         image: postgres:16
@@ -61,6 +60,13 @@ jobs:
               --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
               --file "$f"
           done
+
+      - name: Seed E2E test data
+        run: |
+          ENVIRONMENT=staging STAGING_SEED_ENABLED=true \
+            STAGING_TEST_EMAIL=dina.test@example.com \
+            STAGING_TEST_PASSWORD=Dina-Test-2026! \
+            python scripts/seed_staging.py
 
       - name: Generate ephemeral backend secret
         run: |
@@ -194,6 +200,20 @@ jobs:
             echo
             echo "این APK با Backend واقعی همین اجرای CI ساخته شده است."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep backend alive for manual testing
+        run: |
+          echo "DINA MANUAL E2E SESSION IS LIVE"
+          echo "Backend: $DINA_BASE_URL"
+          echo "APK artifact: dina-real-backend-test-apk"
+          echo "This session remains alive for up to 6 hours."
+          echo "Install the APK and test it now. Cancel this workflow when finished."
+          while true; do
+            kill -0 "$(cat /tmp/dina-backend.pid)" 2>/dev/null || exit 1
+            kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null || exit 1
+            curl -fsS --max-time 15 "$DINA_BASE_URL/health/ready" >/dev/null || exit 1
+            sleep 60
+          done
 
       - name: Show backend log on failure
         if: failure()
