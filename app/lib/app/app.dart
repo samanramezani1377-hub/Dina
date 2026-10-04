@@ -60,12 +60,7 @@ class _DinaAppState extends State<DinaApp> {
         ),
       ),
       locale: AppTheme.locale, supportedLocales: AppTheme.supportedLocales,
-      localizationsDelegates: const <LocalizationsDelegate<Object?>>[
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        FLocalizations.delegate,
-      ],
+      localizationsDelegates: FLocalizations.localizationsDelegates,
       home: const AuthGate(),
     ),
   );
