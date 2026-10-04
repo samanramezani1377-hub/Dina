@@ -94,6 +94,7 @@ class _DashboardShellState extends State<DashboardShell> {
       showDragHandle: true,
       builder: (BuildContext sheetContext) => SafeArea(
         child: SingleChildScrollView(
+          key: const ValueKey<String>('overflow-navigation'),
           child: Column(
             children: <Widget>[
               for (final ShellDestination destination in secondary)
