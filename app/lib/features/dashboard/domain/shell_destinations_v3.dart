@@ -23,9 +23,10 @@ abstract final class ShellDestinations {
   static const payments=ShellDestination(id:'payments',label:'دریافت و پرداخت',icon:Icons.payments_outlined,description:'تسویه‌ها.');
   static const reports=ShellDestination(id:'reports',label:'گزارش‌ها',icon:Icons.analytics_outlined,description:'گزارش‌های مالی.');
   static const management=ShellDestination(id:'management',label:'مدیریت',icon:Icons.admin_panel_settings_outlined,description:'مدیریت سازمان، اشتراک و رویدادها.');
+  static const platformAdmin=ShellDestination(id:'platform-admin',label:'مدیریت پلتفرم',icon:Icons.security_outlined,description:'کنترل کاربران، سازمان‌ها، پلن‌ها و پرداخت‌ها.');
   static const errors=ShellDestination(id:'error-center',label:'مرکز خطا',icon:Icons.bug_report_outlined,description:'خطاها و لاگ‌های تشخیصی.');
   static const settings=ShellDestination(id:'settings',label:'تنظیمات',icon:Icons.settings_outlined,description:'تنظیمات سازمان و حساب.');
-  static const all=<ShellDestination>[dashboard,chart,journal,ledger,trial,customers,suppliers,products,warehouses,inventory,cash,checks,sales,purchases,fiscalYears,invoices,payments,reports,management,errors,settings];
+  static const all=<ShellDestination>[dashboard,chart,journal,ledger,trial,customers,suppliers,products,warehouses,inventory,cash,checks,sales,purchases,fiscalYears,invoices,payments,reports,management,platformAdmin,errors,settings];
   static const primaryDestinations=<ShellDestination>[dashboard,chart,journal,ledger];
   static ShellDestination byId(String id)=>all.firstWhere((d)=>d.id==id);
 }
