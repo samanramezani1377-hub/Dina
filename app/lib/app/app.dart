@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:forui/forui.dart';
 import '../features/auth/data/auth_api.dart';
 import '../features/auth/data/auth_repository.dart';
