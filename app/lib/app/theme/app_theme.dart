@@ -6,8 +6,13 @@ abstract final class AppTheme {
   static FThemeData foruiDark() => FTheme.neutral.dark.desktop;
   static const Locale locale = Locale('fa', 'IR');
   static const List<Locale> supportedLocales = <Locale>[locale];
-  static ThemeData light() => _base(ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4), brightness: Brightness.light));
-  static ThemeData dark() => _base(ColorScheme.fromSeed(seedColor: const Color(0xFF9A82DB), brightness: Brightness.dark));
+  static ThemeData light() => _foruiMaterial(FTheme.neutral.light.desktop);
+  static ThemeData dark() => _foruiMaterial(FTheme.neutral.dark.desktop);
+
+  static ThemeData _foruiMaterial(FThemeData theme) => theme
+      .toApproximateMaterialTheme()
+      .copyWith(fontFamily: 'Vazirmatn', visualDensity: VisualDensity.standard);
+
   static ThemeData _base(ColorScheme scheme) => ThemeData(
     colorScheme: scheme, useMaterial3: true, fontFamily: 'Vazirmatn',
     scaffoldBackgroundColor: scheme.surface,
