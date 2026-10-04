@@ -1,17 +1,68 @@
 name: Deployed E2E smoke
+
 on:
   workflow_dispatch:
     inputs:
       base_url:
+        description: "Public HTTPS URL of the running Dina Codespace backend"
         required: true
         type: string
+
 jobs:
-  smoke:
+  smoke-and-apk:
+    name: Backend smoke and test APK
     runs-on: ubuntu-latest
     env:
       DINA_BASE_URL: ${{ inputs.base_url }}
-      DINA_TOKEN: ${{ secrets.E2E_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - name: Run deployed smoke
+      - name: Check deployed backend
         run: python3 scripts/performance_smoke.py
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+          cache: true
+          pub-cache: true
+      - name: Generate Android platform files
+        working-directory: app
+        run: flutter create . --platforms=android --project-name dina_app
+      - name: Get packages
+        working-directory: app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze --fatal-infos --fatal-warnings
+      - name: Test
+        working-directory: app
+        run: flutter test
+      - name: Build test APK against Codespace
+        working-directory: app
+        run: flutter build apk --release --dart-define=API_BASE_URL="$DINA_BASE_URL"
+      - name: Verify APK
+        working-directory: app
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          test -s "$apk"
+          sha256sum "$apk"
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dina-codespace-test-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+      - name: Write test summary
+        run: |
+          {
+            echo "## دینا — محیط تست Codespaces"
+            echo
+            echo "- Backend: $DINA_BASE_URL"
+            echo "- Health: موفق"
+            echo "- Flutter analyze: موفق"
+            echo "- Flutter tests: موفق"
+            echo "- APK: در بخش Artifacts موجود است"
+            echo
+            echo "این APK با همین Backend ساخته شده است."
+          } >> "$GITHUB_STEP_SUMMARY"
