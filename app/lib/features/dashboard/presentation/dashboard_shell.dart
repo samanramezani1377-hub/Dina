@@ -212,31 +212,33 @@ class _SidePanel extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: ListView(
+              child: SingleChildScrollView(
                 key: const ValueKey<String>('wide-navigation'),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                children: <Widget>[
-                  for (final ShellDestination destination
-                      in ShellDestinations.all)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: extended
-                          ? ListTile(
-                              selected: destination.id == selectedId,
-                              leading: Icon(destination.icon),
-                              title: Text(destination.label),
-                              onTap: () => onSelect(destination.id),
-                            )
-                          : Tooltip(
-                              message: destination.label,
-                              child: IconButton(
-                                isSelected: destination.id == selectedId,
-                                icon: Icon(destination.icon),
-                                onPressed: () => onSelect(destination.id),
+                child: Column(
+                  children: <Widget>[
+                    for (final ShellDestination destination
+                        in ShellDestinations.all)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: extended
+                            ? ListTile(
+                                selected: destination.id == selectedId,
+                                leading: Icon(destination.icon),
+                                title: Text(destination.label),
+                                onTap: () => onSelect(destination.id),
+                              )
+                            : Tooltip(
+                                message: destination.label,
+                                child: IconButton(
+                                  isSelected: destination.id == selectedId,
+                                  icon: Icon(destination.icon),
+                                  onPressed: () => onSelect(destination.id),
+                                ),
                               ),
-                            ),
-                    ),
-                ],
+                      ),
+                  ],
+                ),
               ),
             ),
             Padding(
