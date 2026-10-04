@@ -1,75 +1,84 @@
 # وضعیت پیاده‌سازی دینا
 
-این سند وضعیت واقعی شاخه main را ثبت می‌کند. مسیر اصلی از حالت prototype خارج شده و backend عملیاتی، persistence و APIهای اصلی روی آن قرار گرفته‌اند.
+این فایل وضعیت واقعی شاخه main را ثبت می‌کند. دینا از prototype عبور کرده و هسته حسابداری، persistence، عملیات فروش/خرید، انبار، خزانه، گزارش‌ها و سخت‌سازی API روی main قرار دارد.
 
 ## تکمیل‌شده
 
-### Persistence و tenant isolation
-- محیط production از PostgreSQL استفاده می‌کند؛ InMemoryStore فقط برای test environment است.
-- کاربران، عضویت‌ها، سازمان‌ها، حساب‌ها و اسناد در PostgreSQL ذخیره می‌شوند.
-- entry_date در migration پایدار شده است.
-- tenant predicate در خواندن حساب‌ها و اسناد اعمال می‌شود.
-- PostgreSQL integration test برای ساخت/ذخیره/post/query و tenant isolation وجود دارد.
-- Audit در production به PostgresAuditStore وصل است و migration آن append-only است.
+### زیرساخت و persistence
+- PostgreSQL در production مرجع اصلی داده است و InMemoryStore فقط برای test است.
+- کاربران، سازمان‌ها، عضویت‌ها، حساب‌ها، اسناد و داده‌های عملیاتی روی PostgreSQL ذخیره می‌شوند.
+- migrationها به ترتیب شماره اجرا می‌شوند.
+- tenant isolation و RBAC در Backend enforce می‌شوند.
+- audit trail و مرکز خطا به persistence متصل‌اند.
+- journalها از نظر بدهکار/بستانکار validate می‌شوند و posted/reversed قابل حذف یا ویرایش مخرب نیستند.
 
-### Authentication
-- ثبت‌نام، ورود و /me با access token امضاشده HMAC کار می‌کنند.
-- مسیرهای عملیاتی در production هویت را از Authorization: Bearer می‌گیرند.
-- X-User-Id فقط در محیط test برای fixtureهای قدیمی پذیرفته می‌شود.
-- Argon2id برای password و rehash هنگام login فعال است.
+### هسته حسابداری
+- Chart of Accounts
+- Journal draft/post
+- Reversal/Correction
+- Ledger
+- Trial Balance
+- Profit & Loss
+- Balance Sheet
+- Account Statement
+- Decimal/NUMERIC برای مقادیر مالی
+- کنترل سال مالی و جلوگیری از overlap
 
-### Accounting API
-- ساخت و فهرست حساب‌ها.
-- ساخت، دریافت، ویرایش و حذف draft journal.
-- post کردن journal.
-- reversal برای سند posted.
-- ledger و trial balance.
-- مبالغ با Decimal/NUMERIC نگهداری می‌شوند.
-- tenant و role در backend enforce می‌شوند.
-- audit برای ساخت حساب، ساخت سند، posting، reversal و correction ثبت می‌شود.
+### عملیات
+- مشتریان و تأمین‌کنندگان
+- کالا/خدمات
+- انبار و گردش موجودی
+- انتقال اتمیک بین انبارها
+- فروش و خرید
+- Posting فروش/خرید به دفتر روزنامه
+- COGS و inventory accounting برای کالاهای tracked
+- صندوق و بانک
+- دریافت/پرداخت و اتصال به حساب‌های دفتر کل
+- چک‌ها و state machine
+- گزارش موجودی، فروش و خرید
+- مدیریت و مرکز خطا
 
-### SaaS / عملیات
-- سازمان و membership.
-- مشتریان.
-- فاکتورها.
-- ثبت پرداخت و محاسبه وضعیت open/partial/paid.
-- subscription با وضعیت‌های trial/active/past_due/cancelled/expired.
-- migration 004_saas.sql برای این بخش اضافه شده است.
-- پرداخت و تغییر subscription audit می‌شوند.
+### SaaS و پرداخت
+- subscription lifecycle پایه
+- payment attempt با Idempotency-Key
+- payment webhook/event deduplication
+- مرز مستقل PaymentProvider برای اتصال درگاه واقعی
+- عدم نگهداری secret در repository
 
-### APIهای اصلی
-GET  /health
-POST /api/v1/auth/register
-POST /api/v1/auth/login
-GET  /api/v1/auth/me
-POST /api/v1/organizations
-POST /api/v1/organizations/{organization_id}/members
-DELETE /api/v1/organizations/{organization_id}/members/{member_user_id}
-GET  /api/v1/organizations/{organization_id}/ledger
-GET  /api/v1/organizations/{organization_id}/trial-balance
-POST /api/v1/organizations/{organization_id}/accounts
-GET  /api/v1/organizations/{organization_id}/accounts
-POST /api/v1/organizations/{organization_id}/journals
-GET  /api/v1/organizations/{organization_id}/journals/{entry_id}
-PATCH /api/v1/organizations/{organization_id}/journals/{entry_id}
-DELETE /api/v1/organizations/{organization_id}/journals/{entry_id}
-POST /api/v1/organizations/{organization_id}/journals/{entry_id}/post
-POST /api/v1/organizations/{organization_id}/journals/{entry_id}/reverse
-POST /api/v1/organizations/{organization_id}/customers
-GET  /api/v1/organizations/{organization_id}/customers
-POST /api/v1/organizations/{organization_id}/invoices
-GET  /api/v1/organizations/{organization_id}/invoices
-POST /api/v1/organizations/{organization_id}/invoices/{invoice_id}/payments
-PUT  /api/v1/organizations/{organization_id}/subscription
-GET  /api/v1/organizations/{organization_id}/subscription
+### خروجی
+- CSV با UTF-8 BOM برای تراز آزمایشی، دفتر کل، فروش، خرید و موجودی
+- همه خروجی‌های مالی tenant-scoped و RBAC-protected هستند.
 
-## تست و CI
-CI سه بخش اصلی دارد:
-- Backend + PostgreSQL واقعی + تمام backend/tests.
-- Flutter lint/test/APK.
-- Flutter Windows build.
+### کلاینت
+- Android و Windows
+- navigation واکنش‌گرا
+- navigation گسترده و overflow قابل اسکرول
+- صفحات عملیاتی اصلی و گزارش‌ها
+- تست Flutter برای navigation
 
-Migrationها به ترتیب نام اجرا می‌شوند و build artifact نیز بعد از build واقعاً بررسی می‌شود.
+### CI
+CI واقعی شامل:
+- PostgreSQL 16 واقعی + migration + تمام backend/tests
+- Flutter analyze
+- Flutter tests
+- Android release APK و بررسی وجود artifact
+- Windows release build و بررسی وجود binary
 
-## نکته نهایی
-سبز بودن CI فقط بعد از اجرای GitHub Actions روی آخرین commit قابل اعلام است. بنابراین «کد تکمیل شده» و «CI سبز تأییدشده» دو وضعیت جدا هستند و دومی باید از run واقعی GitHub تأیید شود.
+## موارد باقی‌مانده برای انتشار نهایی
+
+این‌ها دیگر «هسته حسابداری» نیستند و برای production واقعی باید قبل از عرضه عمومی انجام شوند:
+
+1. اتصال یک درگاه پرداخت واقعی و پیاده‌سازی signature verification مخصوص همان provider.
+2. Rate limiting توزیع‌شده برای auth و endpointهای حساس؛ برای deployment چندپردازه Redis یا gateway مناسب‌تر از limiter درون‌پردازه‌ای است.
+3. Backup خارج از سرور اصلی، retention policy و restore drill دوره‌ای روی محیط staging.
+4. E2E واقعی Android/Windows در برابر Backend deployed.
+5. monitoring/metrics/alerting و health check وابسته به PostgreSQL.
+6. تولید PDF/Excel رسمی با قالب‌های قابل چاپ در صورت نیاز کسب‌وکار.
+7. انتشار signed Android artifact و Windows installer/signing.
+8. تکمیل shortcutهای عملیاتی UI مطابق ماتریس میانبرهای پروژه و اتصال هر میانبر به action واقعی صفحه مربوطه.
+9. تست concurrency و performance با حجم داده واقعی.
+10. الزامات مالیاتی/قوانین محلی و شماره‌گذاری نهایی اسناد، پس از مشخص‌شدن مقررات کسب‌وکار.
+
+## اصل صداقت CI
+
+سبز بودن CI فقط بعد از اجرای GitHub Actions روی آخرین commit قابل اعلام است. «پیاده‌سازی‌شده» و «تأییدشده با CI» دو وضعیت جدا هستند.
