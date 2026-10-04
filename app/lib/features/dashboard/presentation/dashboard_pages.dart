@@ -47,7 +47,7 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
         ),
       ),
     );
-    if (picked != null) onNavigate?.call(picked);
+    if (picked != null) widget.onNavigate?.call(picked);
   }
 
   @override Widget build(BuildContext context) {
@@ -66,7 +66,7 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
                 const SizedBox(height: 4),
                 Text('${widget.organizationName} • خوش آمدید، ${widget.userLabel}'),
               ])),
-              FilledButton.icon(onPressed: onNavigate == null ? null : () => _showQuickActions(context), icon: const Icon(Icons.add), label: const Text('عملیات جدید')),
+              FilledButton.icon(onPressed: widget.onNavigate == null ? null : () => _showQuickActions(context), icon: const Icon(Icons.add), label: const Text('عملیات جدید')),
             ]),
           ),
         ),
