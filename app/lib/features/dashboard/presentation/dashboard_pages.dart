@@ -21,10 +21,24 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
   }
   @override Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       children: [
-        Text(widget.organizationName, style: Theme.of(context).textTheme.headlineSmall),
-        Text('خوش آمدید، $widget.userLabel'),
+        Card(
+          color: Theme.of(context).colorScheme.primaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(22),
+            child: Row(children: [
+              CircleAvatar(radius: 28, backgroundColor: Theme.of(context).colorScheme.primary, child: Icon(Icons.auto_graph, color: Theme.of(context).colorScheme.onPrimary)),
+              const SizedBox(width: 16),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('داشبورد مالی', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 4),
+                Text('${widget.organizationName} • خوش آمدید، ${widget.userLabel}'),
+              ])),
+              FilledButton.icon(onPressed: () {}, icon: const Icon(Icons.add), label: const Text('عملیات جدید')),
+            ]),
+          ),
+        ),
         const SizedBox(height: 20),
         FutureBuilder<JsonMap?>(
           future: load(),
