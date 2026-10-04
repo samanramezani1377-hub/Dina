@@ -1,0 +1,58 @@
+name: Signed release artifacts
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions: {contents: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: {flutter-version: "3.24.5", channel: stable}
+      - name: Configure Android signing
+        working-directory: app
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_B64"
+          mkdir -p android/app
+          echo "$ANDROID_KEYSTORE_B64" | base64 --decode > android/app/release.jks
+          cat > android/key.properties <<EOF
+          storePassword=$ANDROID_STORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=release.jks
+          EOF
+      - name: Build signed APK
+        working-directory: app
+        run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dina-android-signed
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+      - name: Publish Android asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/app/outputs/flutter-apk/app-release.apk
+  windows:
+    runs-on: windows-2022
+    permissions: {contents: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: {flutter-version: "3.24.5", channel: stable}
+      - name: Build Windows
+        working-directory: app
+        run: flutter build windows --release
+      - name: Package Windows
+        shell: pwsh
+        working-directory: app
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dina-windows.zip
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: app/dina-windows.zip
