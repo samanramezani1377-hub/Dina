@@ -203,9 +203,6 @@ class _SidePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final int selectedIndex = ShellDestinations.all.indexWhere(
-      (ShellDestination d) => d.id == selectedId,
-    );
     return Container(
       width: extended ? 248 : 96,
       color: scheme.surfaceContainerLow,
