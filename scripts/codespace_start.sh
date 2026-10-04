@@ -27,7 +27,7 @@ docker compose -f docker-compose.codespaces.yml exec -T postgres pg_isready -U d
 echo "Applying Dina migrations..."
 for migration in database/migrations/*.sql; do
   echo "  -> $migration"
-  PGPASSWORD=dina_codespace psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration" >/dev/null
+  docker compose -f docker-compose.codespaces.yml exec -T postgres psql -U dina -d dina -v ON_ERROR_STOP=1 < "$migration" >/dev/null
 done
 
 python -m pip install -q -r backend/requirements.txt
