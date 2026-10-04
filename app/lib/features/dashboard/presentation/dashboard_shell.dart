@@ -120,9 +120,10 @@ class _DashboardShellState extends State<DashboardShell> {
       context: context,
       showDragHandle: true,
       builder: (BuildContext sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: <Widget>[
+        child: SingleChildScrollView(
+          key: const ValueKey<String>('overflow-navigation'),
+          child: Column(
+            children: <Widget>[
             for (final ShellDestination destination in secondary)
               ListTile(
                 key: ValueKey<String>('more-${destination.id}'),
@@ -130,7 +131,8 @@ class _DashboardShellState extends State<DashboardShell> {
                 title: Text(destination.label),
                 onTap: () => Navigator.of(sheetContext).pop(destination.id),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
