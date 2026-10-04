@@ -28,39 +28,67 @@ DinaAppDependencies buildDinaAppDependencies({required KeyValueStore store, requ
     transport: transport,
   );
 }
+
 class DinaAppDependencies {
   DinaAppDependencies({required this.authController, required this.organizationController, required this.api, required HttpTransport transport}) : _transport = transport;
   final AuthController authController;
   final OrganizationController organizationController;
   final ApiClient api;
   final HttpTransport _transport;
-  void dispose() { authController.dispose(); organizationController.dispose(); _transport.close(); }
+
+  void dispose() {
+    authController.dispose();
+    organizationController.dispose();
+    _transport.close();
+  }
 }
+
 class DinaApp extends StatefulWidget {
   const DinaApp({required this.dependencies, super.key});
   final DinaAppDependencies dependencies;
-  @override State<DinaApp> createState() => _DinaAppState();
+
+  @override
+  State<DinaApp> createState() => _DinaAppState();
 }
+
 class _DinaAppState extends State<DinaApp> {
-  @override void initState() { super.initState(); widget.dependencies.authController.restore(); }
-  @override void didUpdateWidget(DinaApp oldWidget) { super.didUpdateWidget(oldWidget); if (!identical(oldWidget.dependencies, widget.dependencies)) widget.dependencies.authController.restore(); }
-  @override Widget build(BuildContext context) => AppScope(
-    authController: widget.dependencies.authController,
-    organizationController: widget.dependencies.organizationController,
-    api: widget.dependencies.api,
-    child: MaterialApp(
-      title: 'دینا', debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(), darkTheme: AppTheme.dark(), themeMode: ThemeMode.system,
-      builder: (context, child) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: FTheme(
-          data: Theme.of(context).brightness == Brightness.dark ? AppTheme.foruiDark() : AppTheme.foruiLight(),
-          child: child ?? const SizedBox.shrink(),
+  @override
+  void initState() {
+    super.initState();
+    widget.dependencies.authController.restore();
+  }
+
+  @override
+  void didUpdateWidget(DinaApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.dependencies, widget.dependencies)) {
+      widget.dependencies.authController.restore();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AppScope(
+        authController: widget.dependencies.authController,
+        organizationController: widget.dependencies.organizationController,
+        api: widget.dependencies.api,
+        child: MaterialApp(
+          title: 'دینا',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          themeMode: ThemeMode.system,
+          builder: (context, child) => Directionality(
+            textDirection: TextDirection.rtl,
+            child: FTheme(
+              data: Theme.of(context).brightness == Brightness.dark
+                  ? AppTheme.foruiDark()
+                  : AppTheme.foruiLight(),
+              child: child ?? const SizedBox.shrink(),
+            ),
+          ),
+          locale: AppTheme.locale,
+          supportedLocales: AppTheme.supportedLocales,
+          home: const AuthGate(),
         ),
-      ),
-      locale: AppTheme.locale, supportedLocales: AppTheme.supportedLocales,
-      localizationsDelegates: FLocalizations.localizationsDelegates,
-      home: const AuthGate(),
-    ),
-  );
+      );
 }
