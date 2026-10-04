@@ -215,25 +215,32 @@ class _SidePanel extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: ListView(
+              child: SingleChildScrollView(
                 key: const ValueKey<String>('wide-navigation'),
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                children: <Widget>[
-                  for (final ShellDestination destination
-                      in ShellDestinations.all)
-                    ListTile(
-                      selected: destination.id == selectedId,
-                      leading: Icon(destination.icon),
-                      title: Text(destination.label),
-                      tooltip: destination.description,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: extended ? 18 : 8,
-                        vertical: 2,
+                child: NavigationRail(
+                  extended: extended,
+                  selectedIndex: ShellDestinations.all.indexWhere(
+                    (ShellDestination d) => d.id == selectedId,
+                  ) < 0
+                      ? 0
+                      : ShellDestinations.all.indexWhere(
+                          (ShellDestination d) => d.id == selectedId,
+                        ),
+                  labelType: extended
+                      ? NavigationRailLabelType.none
+                      : NavigationRailLabelType.all,
+                  onDestinationSelected: (int index) =>
+                      onSelect(ShellDestinations.all[index].id),
+                  destinations: <NavigationRailDestination>[
+                    for (final ShellDestination destination
+                        in ShellDestinations.all)
+                      NavigationRailDestination(
+                        icon: Icon(destination.icon),
+                        selectedIcon: Icon(destination.icon, fill: 1),
+                        label: Text(destination.label),
                       ),
-                      minLeadingWidth: extended ? null : 28,
-                      onTap: () => onSelect(destination.id),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
             Padding(
