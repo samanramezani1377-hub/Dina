@@ -1,7 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import '../features/auth/data/auth_api.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/domain/session.dart';
@@ -56,17 +54,12 @@ class _DinaAppState extends State<DinaApp> {
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,
         child: FTheme(
-          data: Theme.brightnessOf(context) == Brightness.dark
-              ? (const <TargetPlatform>{TargetPlatform.android, TargetPlatform.iOS, TargetPlatform.fuchsia}.contains(defaultTargetPlatform) ? FTheme.neutral.dark.touch : AppTheme.foruiDark())
-              : (const <TargetPlatform>{TargetPlatform.android, TargetPlatform.iOS, TargetPlatform.fuchsia}.contains(defaultTargetPlatform) ? FTheme.neutral.light.touch : AppTheme.foruiLight()),
-          child: FTooltipGroup(child: child ?? const SizedBox.shrink()),
+          data: Theme.of(context).brightness == Brightness.dark ? AppTheme.foruiDark() : AppTheme.foruiLight(),
+          child: child ?? const SizedBox.shrink(),
         ),
       ),
       locale: AppTheme.locale, supportedLocales: AppTheme.supportedLocales,
-      localizationsDelegates: const <LocalizationsDelegate<Object?>>[
-        GlobalMaterialLocalizations.delegate, GlobalWidgetsLocalizations.delegate, GlobalCupertinoLocalizations.delegate,
-        ...FLocalizations.localizationsDelegates,
-      ],
+      localizationsDelegates: const <LocalizationsDelegate<Object?>>[],
       home: const AuthGate(),
     ),
   );
