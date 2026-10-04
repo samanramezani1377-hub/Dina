@@ -115,6 +115,22 @@ jobs:
           cat /tmp/cloudflared.log
           exit 1
 
+      - name: Wait for public backend
+        run: |
+          set -euo pipefail
+          echo "Waiting for public DNS and Cloudflare edge to become reachable..."
+          for _ in {1..60}; do
+            if curl -fsS --connect-timeout 5 --max-time 15 \
+              "$DINA_BASE_URL/health/ready" >/dev/null; then
+              echo "Public Dina backend is reachable: $DINA_BASE_URL"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Public backend did not become reachable in time: $DINA_BASE_URL"
+          cat /tmp/cloudflared.log || true
+          exit 1
+
       - name: Check public backend
         run: python3 scripts/performance_smoke.py
         env:
