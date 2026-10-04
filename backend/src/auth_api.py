@@ -21,6 +21,7 @@ from .auth import UserDirectory, issue_access_token, token_user_id
 from .config import Settings, get_settings
 from .security import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from .audit import AuditAction, record
+from .rate_limit import enforce_auth_rate_limit
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -55,6 +56,7 @@ def get_user_directory(request: Request) -> UserDirectory:
 @router.post("/register", status_code=201)
 def register(
     payload: RegistrationInput,
+    request: Request,
     users: UserDirectory = Depends(get_user_directory),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
@@ -63,6 +65,7 @@ def register(
     Returns the same token shape as :func:`login`, so a client does not need a
     second round trip after registering.
     """
+    enforce_auth_rate_limit(request)
     try:
         user = users.register(payload.email, payload.password)
     except Exception:
@@ -81,6 +84,7 @@ def register(
 @router.post("/login")
 def login(
     payload: CredentialsInput,
+    request: Request,
     users: UserDirectory = Depends(get_user_directory),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
@@ -90,6 +94,7 @@ def login(
     the caller, and the comparison costs about the same either way — see
     :meth:`src.auth.UserDirectory.authenticate`.
     """
+    enforce_auth_rate_limit(request)
     try:
         user = users.authenticate(payload.email, payload.password)
     except Exception:
