@@ -11,7 +11,7 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  forui: 0.18.0
+  forui: 0.7.0
 
   cupertino_icons: ^1.0.8
   http: ^1.2.2
