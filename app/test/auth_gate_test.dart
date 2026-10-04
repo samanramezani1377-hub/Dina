@@ -32,6 +32,11 @@ void main() {
           '/api/v1/organizations',
           organizationsJson(<String>['شرکت الف']),
         );
+      transport.onJson(
+        'GET',
+        '/api/v1/organizations/org-1/trial-balance',
+        trialBalanceJson(),
+      );
 
       final DinaAppDependencies dependencies = buildDinaAppDependencies(
         store: store,
