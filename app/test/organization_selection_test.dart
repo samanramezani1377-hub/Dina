@@ -174,7 +174,7 @@ void main() {
         )
         ..onJson(
           'GET',
-          '/api/v1/organizations/org-1/trial-balance',
+          '/api/v1/organizations/org-2/trial-balance',
           trialBalanceJson(),
         );
 
