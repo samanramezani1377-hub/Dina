@@ -41,9 +41,12 @@
 ### SaaS و پرداخت
 - subscription lifecycle پایه
 - payment attempt با Idempotency-Key
+- webhook با secret و state transition معتبر
 - payment webhook/event deduplication
 - مرز مستقل PaymentProvider برای اتصال درگاه واقعی
 - عدم نگهداری secret در repository
+- rate limiting احراز هویت در PostgreSQL برای deployment چندپردازه
+- readiness probe وابسته به PostgreSQL
 
 ### خروجی
 - CSV با UTF-8 BOM برای تراز آزمایشی، دفتر کل، فروش، خرید و موجودی
