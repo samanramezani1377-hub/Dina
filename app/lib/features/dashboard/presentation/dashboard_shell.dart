@@ -243,25 +243,24 @@ class _SidePanel extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: NavigationRail(
+              child: ListView(
                 key: const ValueKey<String>('wide-navigation'),
-                extended: extended,
-                selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
-                labelType: extended
-                    ? NavigationRailLabelType.none
-                    : NavigationRailLabelType.all,
-                onDestinationSelected: (int index) =>
-                    onSelect(ShellDestinations.all[index].id),
-                destinations: <NavigationRailDestination>[
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                children: <Widget>[
                   for (final ShellDestination destination
                       in ShellDestinations.all)
-                    NavigationRailDestination(
-                      icon: Icon(destination.icon),
-                      selectedIcon: Icon(
+                    ListTile(
+                      selected: destination.id == selectedId,
+                      leading: Icon(
                         destination.icon,
-                        fill: 1,
+                        color: destination.id == selectedId
+                            ? scheme.primary
+                            : null,
                       ),
-                      label: Text(destination.label),
+                      title: extended ? Text(destination.label) : null,
+                      tooltip: destination.label,
+                      onTap: () => onSelect(destination.id),
+                      dense: true,
                     ),
                 ],
               ),
