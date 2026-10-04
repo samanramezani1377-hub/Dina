@@ -1,0 +1,17 @@
+name: Deployed E2E smoke
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        required: true
+        type: string
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      DINA_BASE_URL: ${{ inputs.base_url }}
+      DINA_TOKEN: ${{ secrets.E2E_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run deployed smoke
+        run: python3 scripts/performance_smoke.py
