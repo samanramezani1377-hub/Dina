@@ -26,29 +26,29 @@ class _PlatformAdminPageState extends State<PlatformAdminPage> {
   String v(Object? x) => x?.toString() ?? '—';
 
   static const _settings = <(String, String, bool)>[
-    ('zarinpal_merchant_id', 'زرین‌پال — Merchant ID', false),
-    ('zarinpal_callback_url', 'زرین‌پال — Callback URL', false),
-    ('zarinpal_webhook_secret', 'زرین‌پال — Webhook Secret', true),
+    ('zarinpal_merchant_id', 'زرین‌پال — شناسه پذیرنده', false),
+    ('zarinpal_callback_url', 'زرین‌پال — نشانی بازگشت', false),
+    ('zarinpal_webhook_secret', 'زرین‌پال — کلید امنیتی اعلان', true),
     ('taxpayer_system_username', 'سامانه مؤدیان — نام کاربری', false),
     ('taxpayer_system_password', 'سامانه مؤدیان — رمز عبور', true),
-    ('taxpayer_system_client_id', 'سامانه مؤدیان — Client ID', false),
-    ('taxpayer_system_client_secret', 'سامانه مؤدیان — Client Secret', true),
+    ('taxpayer_system_client_id', 'سامانه مؤدیان — شناسه کاربری برنامه', false),
+    ('taxpayer_system_client_secret', 'سامانه مؤدیان — کلید محرمانه برنامه', true),
     ('taxpayer_system_fiscal_id', 'سامانه مؤدیان — شناسه حافظه مالیاتی', false),
-    ('taxpayer_system_api_url', 'سامانه مؤدیان — API URL', false),
-    ('backup_database_url', 'Backup — Database URL', true),
-    ('backup_storage_url', 'Backup — Storage URL', false),
-    ('backup_access_key', 'Backup — Access Key', true),
-    ('backup_secret_key', 'Backup — Secret Key', true),
-    ('monitoring_dsn', 'Monitoring — DSN', true),
-    ('monitoring_alert_webhook', 'Monitoring — Alert Webhook', true),
-    ('e2e_base_url', 'E2E — Production URL', false),
-    ('e2e_token', 'E2E — Token', true),
-    ('android_keystore_b64', 'Android — Keystore (Base64)', true),
-    ('android_key_alias', 'Android — Key Alias', false),
-    ('android_key_password', 'Android — Key Password', true),
-    ('android_store_password', 'Android — Store Password', true),
-    ('windows_signing_certificate_b64', 'Windows — Certificate (Base64)', true),
-    ('windows_signing_password', 'Windows — Certificate Password', true),
+    ('taxpayer_system_api_url', 'سامانه مؤدیان — نشانی برخط', false),
+    ('backup_database_url', 'پشتیبان‌گیری — نشانی پایگاه داده', true),
+    ('backup_storage_url', 'پشتیبان‌گیری — نشانی فضای ذخیره‌سازی', false),
+    ('backup_access_key', 'پشتیبان‌گیری — کلید دسترسی', true),
+    ('backup_secret_key', 'پشتیبان‌گیری — کلید محرمانه', true),
+    ('monitoring_dsn', 'پایش — شناسه اتصال', true),
+    ('monitoring_alert_webhook', 'پایش — نشانی اعلان', true),
+    ('e2e_base_url', 'آزمون نهایی — نشانی محیط عملیاتی', false),
+    ('e2e_token', 'آزمون نهایی — کلید دسترسی', true),
+    ('android_keystore_b64', 'اندروید — مخزن امضای برنامه', true),
+    ('android_key_alias', 'اندروید — نام کلید', false),
+    ('android_key_password', 'اندروید — رمز کلید', true),
+    ('android_store_password', 'اندروید — رمز مخزن امضا', true),
+    ('windows_signing_certificate_b64', 'ویندوز — گواهی امضا', true),
+    ('windows_signing_password', 'ویندوز — رمز گواهی امضا', true),
   ];
 
   Future<void> _saveSetting(String key, String value) async {
@@ -60,19 +60,25 @@ class _PlatformAdminPageState extends State<PlatformAdminPage> {
       for (final item in _settings) item.$1: TextEditingController(),
     };
     try {
+      final list = await AppScope.of(context).api.get('/platform/settings');
+      if (list?['items'] is List) {
+        for (final raw in list!['items'] as List) {
+          if (raw is JsonMap && raw['key'] != null) configured[raw['key'].toString()] = raw['configured'] == true;
+        }
+      }
       if (!mounted) return;
       await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
         title: const Text('تنظیمات مالک پلتفرم'),
         content: SizedBox(width: 620, child: SingleChildScrollView(child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('مقادیر حساس در Backend به‌صورت رمزنگاری‌شده ذخیره می‌شوند. برای تغییر هر مقدار، مقدار جدید را وارد کنید.'),
+            const Text('مقادیر حساس در سرور به‌صورت رمزنگاری‌شده نگهداری می‌شوند و مقدار قبلی هرگز نمایش داده نمی‌شود. برای جایگزینی، مقدار جدید را وارد کنید.'),
             const SizedBox(height: 16),
             for (final item in _settings)
               Padding(padding: const EdgeInsets.only(bottom: 10), child: TextField(
                 controller: controllers[item.$1],
                 obscureText: item.$3,
-                decoration: InputDecoration(labelText: item.$2, border: const OutlineInputBorder(), suffixIcon: IconButton(icon: const Icon(Icons.paste), onPressed: () async {
+                decoration: InputDecoration(labelText: item.$2, helperText: configured[item.$1] == true ? 'تنظیم شده — برای جایگزینی مقدار جدید وارد کنید' : 'تنظیم نشده', border: const OutlineInputBorder(), suffixIcon: IconButton(icon: const Icon(Icons.paste), onPressed: () async {
                   final data = await Clipboard.getData(Clipboard.kTextPlain); if (data?.text != null) controllers[item.$1]!.text = data!.text!;
                 })),
               )),
