@@ -1,0 +1,7 @@
+-- Sales workflow expansion: price lists, customer credit limits and instalments.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_limit NUMERIC(20,4) NOT NULL DEFAULT 0 CHECK (credit_limit >= 0);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_invoice_limit INTEGER NOT NULL DEFAULT 0 CHECK (credit_invoice_limit >= 0);
+CREATE TABLE IF NOT EXISTS price_lists (id BIGSERIAL PRIMARY KEY, organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, name TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE, UNIQUE(organization_id,name));
+CREATE TABLE IF NOT EXISTS product_prices (price_list_id BIGINT NOT NULL REFERENCES price_lists(id) ON DELETE CASCADE, product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE, price NUMERIC(20,4) NOT NULL CHECK(price >= 0), PRIMARY KEY(price_list_id,product_id));
+CREATE TABLE IF NOT EXISTS sales_installments (id BIGSERIAL PRIMARY KEY, organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, sale_id BIGINT NOT NULL REFERENCES sales(id) ON DELETE CASCADE, installment_no INTEGER NOT NULL CHECK(installment_no > 0), due_date DATE NOT NULL, amount NUMERIC(20,4) NOT NULL CHECK(amount > 0), paid_amount NUMERIC(20,4) NOT NULL DEFAULT 0 CHECK(paid_amount >= 0 AND paid_amount <= amount), status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','partial','paid','cancelled')), UNIQUE(sale_id,installment_no));
+CREATE INDEX IF NOT EXISTS idx_sales_installments_org_due ON sales_installments(organization_id,due_date,status);
