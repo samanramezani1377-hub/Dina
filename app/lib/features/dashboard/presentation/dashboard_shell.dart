@@ -242,10 +242,11 @@ class _SidePanel extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: ListView(
+              child: SingleChildScrollView(
                 key: const ValueKey<String>('wide-navigation'),
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                children: <Widget>[
+                child: Column(
+                  children: <Widget>[
                   for (final ShellDestination destination
                       in ShellDestinations.all)
                     Tooltip(
@@ -263,7 +264,8 @@ class _SidePanel extends StatelessWidget {
                         dense: true,
                       ),
                     ),
-                ],
+                  ],
+                ),
               ),
             ),
             Padding(
