@@ -9,6 +9,7 @@ ALTER TABLE tax_invoices ADD COLUMN IF NOT EXISTS response_code TEXT;
 ALTER TABLE tax_invoices ADD COLUMN IF NOT EXISTS response_payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE tax_invoices ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE tax_invoices ADD COLUMN IF NOT EXISTS submitted_by BIGINT REFERENCES users(id);
+ALTER TABLE tax_invoices ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 CREATE INDEX IF NOT EXISTS idx_tax_invoices_org_status ON tax_invoices(organization_id,status,created_at DESC);
 
 CREATE TABLE IF NOT EXISTS tax_submission_attempts (
