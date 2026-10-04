@@ -5,8 +5,8 @@ abstract final class AppTheme {
   static const Locale locale = Locale('fa', 'IR');
   static const List<Locale> supportedLocales = <Locale>[locale];
 
-  static FThemeData foruiLight() => FThemes.neutral.light;
-  static FThemeData foruiDark() => FThemes.neutral.dark;
+  static FThemeData foruiLight() => FThemeData.inherit(colors: FColorScheme.neutralLight, touch: false);
+  static FThemeData foruiDark() => FThemeData.inherit(colors: FColorScheme.neutralDark, touch: false);
 
   static ThemeData light() => _materialTheme(Brightness.light);
   static ThemeData dark() => _materialTheme(Brightness.dark);
