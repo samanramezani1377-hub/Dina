@@ -93,17 +93,18 @@ class _DashboardShellState extends State<DashboardShell> {
       context: context,
       showDragHandle: true,
       builder: (BuildContext sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: <Widget>[
-            for (final ShellDestination destination in secondary)
-              ListTile(
-                key: ValueKey<String>('more-${destination.id}'),
-                leading: Icon(destination.icon),
-                title: Text(destination.label),
-                onTap: () => Navigator.of(sheetContext).pop(destination.id),
-              ),
-          ],
+        child: SingleChildScrollView(
+          child: Column(
+            children: <Widget>[
+              for (final ShellDestination destination in secondary)
+                ListTile(
+                  key: ValueKey<String>('more-${destination.id}'),
+                  leading: Icon(destination.icon),
+                  title: Text(destination.label),
+                  onTap: () => Navigator.of(sheetContext).pop(destination.id),
+                ),
+            ],
+          ),
         ),
       ),
     );
