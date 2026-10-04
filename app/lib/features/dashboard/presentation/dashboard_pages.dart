@@ -64,7 +64,9 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('داشبورد مالی', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 4),
-                Text('${widget.organizationName} • خوش آمدید، ${widget.userLabel}'),
+                Text(widget.organizationName, style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 2),
+                Text('خوش آمدید، ${widget.userLabel}'),
               ])),
               FilledButton.icon(onPressed: widget.onNavigate == null ? null : () => _showQuickActions(context), icon: const Icon(Icons.add), label: const Text('عملیات جدید')),
             ]),
