@@ -147,7 +147,7 @@ def cash_tx(organization_id:int,p:CashTxIn,request:Request,c:Caller=Depends(writ
             if not account["account_id"]: raise ApiError(ErrorCode.VALIDATION_ERROR,"cash account must be linked to a ledger account")
             if not cn.execute("SELECT 1 FROM accounts WHERE id=%s AND organization_id=%s",(p.counter_account_id,organization_id)).fetchone(): raise ApiError(ErrorCode.NOT_FOUND,"counter account not found")
             lines=[JournalLine(account["account_id"],p.amount,Decimal("0")),JournalLine(p.counter_account_id,Decimal("0"),p.amount)] if p.direction=="in" else [JournalLine(p.counter_account_id,p.amount,Decimal("0")),JournalLine(account["account_id"],Decimal("0"),p.amount)]
-            journal_id=_add_entry(cn,organization_id,p.reference or f"cash-{p.cash_account_id}",p.description,p.transaction_date,lines)
+            journal_id=_add_entry(cn,organization_id,p.reference or f"cash-{p.cash_account_id}-{p.transaction_date}-{__import__('uuid').uuid4().hex}",p.description,p.transaction_date,lines)
         r=cn.execute("INSERT INTO cash_transactions(organization_id,cash_account_id,amount,direction,description,reference,transaction_date,counter_account_id,journal_entry_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",(organization_id,p.cash_account_id,p.amount,p.direction,p.description,p.reference,p.transaction_date,p.counter_account_id,journal_id)).fetchone()
     return _j(dict(r))
 @router.get("/{organization_id}/cash-accounts/{cash_account_id}/balance")
@@ -275,13 +275,15 @@ def _post_document(request, organization_id, document_table, line_table, documen
         warehouse_id=p.warehouse_id or doc["warehouse_id"]
         item_rows=cn.execute(f"SELECT * FROM {line_table} WHERE {("sale_id" if is_sale else "purchase_id") }=%s ORDER BY id",(document_id,)).fetchall()
         if is_sale:
-            lines=[JournalLine(p.receivable_or_payable_account_id,doc["total"],Decimal("0")),JournalLine(p.revenue_or_inventory_account_id,Decimal("0"),doc["subtotal"]-doc["discount"])]
+            lines=[JournalLine(p.receivable_or_payable_account_id,doc["total"],Decimal("0")),JournalLine(p.revenue_or_inventory_account_id,Decimal("0"),doc["subtotal"])]
         else:
-            lines=[JournalLine(p.revenue_or_inventory_account_id,doc["subtotal"]-doc["discount"],Decimal("0")),JournalLine(p.receivable_or_payable_account_id,Decimal("0"),doc["total"])]
+            lines=[JournalLine(p.revenue_or_inventory_account_id,doc["subtotal"],Decimal("0")),JournalLine(p.receivable_or_payable_account_id,Decimal("0"),doc["total"])]
         if doc["tax"]>0:
             if not p.tax_account_id: raise ApiError(ErrorCode.VALIDATION_ERROR,"tax account is required when document has tax")
             lines.append(JournalLine(p.tax_account_id,Decimal("0"),doc["tax"]) if is_sale else JournalLine(p.tax_account_id,doc["tax"],Decimal("0")))
-        if doc["discount"]>0 and p.discount_account_id:
+        if doc["discount"]>0:
+            if not p.discount_account_id:
+                raise ApiError(ErrorCode.VALIDATION_ERROR,"discount account is required when document has discount")
             lines.append(JournalLine(p.discount_account_id,doc["discount"],Decimal("0")) if is_sale else JournalLine(p.discount_account_id,Decimal("0"),doc["discount"]))
         inventory_total=Decimal("0")
         tracked=[x for x in item_rows if x["product_id"]]
