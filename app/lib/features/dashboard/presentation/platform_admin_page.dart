@@ -99,7 +99,11 @@ class _PlatformAdminPageState extends State<PlatformAdminPage> {
           }, child: const Text('ذخیره همه')),
         ],
       ));
-    } finally { for (final c in controllers.values) c.dispose(); }
+    } finally {
+      for (final c in controllers.values) {
+        c.dispose();
+      }
+    }
   }
 
   @override
