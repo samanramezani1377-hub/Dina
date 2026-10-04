@@ -246,18 +246,20 @@ class _SidePanel extends StatelessWidget {
                 children: <Widget>[
                   for (final ShellDestination destination
                       in ShellDestinations.all)
-                    ListTile(
-                      selected: destination.id == selectedId,
-                      leading: Icon(
-                        destination.icon,
-                        color: destination.id == selectedId
-                            ? scheme.primary
-                            : null,
+                    Tooltip(
+                      message: destination.label,
+                      child: ListTile(
+                        selected: destination.id == selectedId,
+                        leading: Icon(
+                          destination.icon,
+                          color: destination.id == selectedId
+                              ? scheme.primary
+                              : null,
+                        ),
+                        title: extended ? Text(destination.label) : null,
+                        onTap: () => onSelect(destination.id),
+                        dense: true,
                       ),
-                      title: extended ? Text(destination.label) : null,
-                      tooltip: destination.label,
-                      onTap: () => onSelect(destination.id),
-                      dense: true,
                     ),
                 ],
               ),
