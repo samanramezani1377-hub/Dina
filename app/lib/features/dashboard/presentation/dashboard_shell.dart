@@ -35,7 +35,6 @@ class _DashboardShellState extends State<DashboardShell> {
     final AuthController auth = scope.authController;
     final String organizationName = organizationNameFor(scope);
     final String userLabel = auth.user?.label ?? '';
-
     final Map<ShortcutActivator, VoidCallback> shortcuts = <ShortcutActivator, VoidCallback>{
       SingleActivator(LogicalKeyboardKey.keyG, control: true): () => _select('chart-of-accounts'),
       SingleActivator(LogicalKeyboardKey.f2): () => _select('chart-of-accounts'),
@@ -59,8 +58,9 @@ class _DashboardShellState extends State<DashboardShell> {
 
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: CallbackShortcuts(bindings: shortcuts,
-      child: LayoutBuilder(
+      child: CallbackShortcuts(
+        bindings: shortcuts,
+        child: LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final bool wide = Breakpoints.isWide(constraints.maxWidth);
         return Scaffold(
@@ -107,7 +107,6 @@ class _DashboardShellState extends State<DashboardShell> {
                 ),
         );
       },
-    );
       ),
     );
   }
@@ -120,19 +119,17 @@ class _DashboardShellState extends State<DashboardShell> {
       context: context,
       showDragHandle: true,
       builder: (BuildContext sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          key: const ValueKey<String>('overflow-navigation'),
-          child: Column(
-            children: <Widget>[
-              for (final ShellDestination destination in secondary)
-                ListTile(
-                  key: ValueKey<String>('more-${destination.id}'),
-                  leading: Icon(destination.icon),
-                  title: Text(destination.label),
-                  onTap: () => Navigator.of(sheetContext).pop(destination.id),
-                ),
-            ],
-          ),
+        child: ListView(
+          shrinkWrap: true,
+          children: <Widget>[
+            for (final ShellDestination destination in secondary)
+              ListTile(
+                key: ValueKey<String>('more-${destination.id}'),
+                leading: Icon(destination.icon),
+                title: Text(destination.label),
+                onTap: () => Navigator.of(sheetContext).pop(destination.id),
+              ),
+          ],
         ),
       ),
     );
@@ -172,7 +169,7 @@ class _DestinationBody extends StatelessWidget {
         key: const ValueKey<String>('dashboard-home'),
         organizationName: organizationNameFor(scope),
         userLabel: scope.authController.user?.label ?? '',
-        onNavigate: _select,
+        onNavigate: (id) => (context.findAncestorStateOfType<_DashboardShellState>())?._select(id),
       );
     }
     return AccountingWorkspace(
@@ -205,6 +202,9 @@ class _SidePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final int selectedIndex = ShellDestinations.all.indexWhere(
+      (ShellDestination d) => d.id == selectedId,
+    );
     return Container(
       width: extended ? 248 : 96,
       color: scheme.surfaceContainerLow,
@@ -242,33 +242,27 @@ class _SidePanel extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: SingleChildScrollView(
+              child: NavigationRail(
                 key: const ValueKey<String>('wide-navigation'),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Column(
-                  children: <Widget>[
-                    for (final ShellDestination destination
-                        in ShellDestinations.all)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: extended
-                            ? ListTile(
-                                selected: destination.id == selectedId,
-                                leading: Icon(destination.icon),
-                                title: Text(destination.label),
-                                onTap: () => onSelect(destination.id),
-                              )
-                            : Tooltip(
-                                message: destination.label,
-                                child: IconButton(
-                                  isSelected: destination.id == selectedId,
-                                  icon: Icon(destination.icon),
-                                  onPressed: () => onSelect(destination.id),
-                                ),
-                              ),
+                extended: extended,
+                selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
+                labelType: extended
+                    ? NavigationRailLabelType.none
+                    : NavigationRailLabelType.all,
+                onDestinationSelected: (int index) =>
+                    onSelect(ShellDestinations.all[index].id),
+                destinations: <NavigationRailDestination>[
+                  for (final ShellDestination destination
+                      in ShellDestinations.all)
+                    NavigationRailDestination(
+                      icon: Icon(destination.icon),
+                      selectedIcon: Icon(
+                        destination.icon,
+                        fill: 1,
                       ),
-                  ],
-                ),
+                      label: Text(destination.label),
+                    ),
+                ],
               ),
             ),
             Padding(
