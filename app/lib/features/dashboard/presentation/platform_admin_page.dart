@@ -59,6 +59,7 @@ class _PlatformAdminPageState extends State<PlatformAdminPage> {
     final controllers = <String, TextEditingController>{
       for (final item in _settings) item.$1: TextEditingController(),
     };
+    final configured = <String, bool>{};
     try {
       final list = await AppScope.of(context).api.get('/platform/settings');
       if (list?['items'] is List) {
@@ -88,7 +89,10 @@ class _PlatformAdminPageState extends State<PlatformAdminPage> {
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('انصراف')),
           FilledButton(onPressed: () async {
             try {
-              for (final item in _settings) { final value = controllers[item.$1]!.text.trim(); if (value.isNotEmpty) await _saveSetting(item.$1, value); }
+              for (final item in _settings) {
+                final String value = controllers[item.$1]!.text.trim();
+                if (value.isNotEmpty) await _saveSetting(item.$1, value);
+              }
               if (dialogContext.mounted) Navigator.pop(dialogContext);
               if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تنظیمات ذخیره شد')));
             } catch (e) { if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('ذخیره تنظیمات ناموفق بود: $e'))); }
