@@ -12,7 +12,7 @@ if not base.startswith("https://"):
     raise SystemExit("DINA_BASE_URL must be an HTTPS URL")
 
 samples = []
-for path in ("/health/live", "/health/ready"):
+for path in ("/health", "/health/ready"):
     request = urllib.request.Request(base + path, headers={"Accept": "application/json"})
     started = time.perf_counter()
     try:
