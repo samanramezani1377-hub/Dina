@@ -5,23 +5,15 @@ abstract final class AppTheme {
   static const Locale locale = Locale('fa', 'IR');
   static const List<Locale> supportedLocales = <Locale>[locale];
 
-  static FThemeData foruiLight() => FTheme.neutral.light.desktop;
-  static FThemeData foruiDark() => FTheme.neutral.dark.desktop;
+  static FThemeData foruiLight() => FThemeData.inherit(colors: FColorScheme.neutralLight, touch: false);
+  static FThemeData foruiDark() => FThemeData.inherit(colors: FColorScheme.neutralDark, touch: false);
 
-  static ThemeData light() => _materialBridge(foruiLight());
-  static ThemeData dark() => _materialBridge(foruiDark());
+  static ThemeData light() => _materialTheme(Brightness.light);
+  static ThemeData dark() => _materialTheme(Brightness.dark);
 
-  static ThemeData _materialBridge(FThemeData foruiTheme) {
-    final ThemeData theme = foruiTheme.toApproximateMaterialTheme();
-    return theme.copyWith(
-      fontFamily: 'Vazirmatn',
-      visualDensity: VisualDensity.standard,
-      scaffoldBackgroundColor: theme.colorScheme.surface,
-      textTheme: theme.textTheme.apply(fontFamily: 'Vazirmatn'),
-      inputDecorationTheme: theme.inputDecorationTheme.copyWith(
-        labelStyle: theme.textTheme.bodyMedium?.copyWith(fontFamily: 'Vazirmatn'),
-      ),
-    );
+  static ThemeData _materialTheme(Brightness brightness) {
+    final ColorScheme scheme = ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4), brightness: brightness);
+    return ThemeData(useMaterial3: true, colorScheme: scheme, fontFamily: 'Vazirmatn', visualDensity: VisualDensity.standard);
   }
 }
 
