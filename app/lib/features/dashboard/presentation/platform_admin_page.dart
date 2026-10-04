@@ -18,7 +18,7 @@ class _PlatformAdminPageState extends State<PlatformAdminPage> {
     body: FutureBuilder<JsonMap?>(
       future: _future,
       builder: (context, s) {
-        if (s.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
+        if (s.connectionState != ConnectionState.done) { return const Center(child: CircularProgressIndicator()); }
         if (s.hasError) return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
           const Text('دسترسی یا بارگذاری ناموفق بود'),
           const SizedBox(height: 10),
