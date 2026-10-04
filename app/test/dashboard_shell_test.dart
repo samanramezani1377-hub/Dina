@@ -172,9 +172,12 @@ void main() {
       final Finder overflowList = find.byKey(
         const ValueKey<String>('overflow-navigation'),
       );
-      await tester.drag(overflowList, const Offset(0, -500));
+      final Finder settingsItem = find.byKey(
+        const ValueKey<String>('more-settings'),
+      );
+      await tester.ensureVisible(settingsItem);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey<String>('more-settings')));
+      await tester.tap(settingsItem);
       await tester.pumpAndSettle();
 
       expect(
