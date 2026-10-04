@@ -98,6 +98,16 @@ class SubscriptionInput(BaseModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
 
+@router.get("/organizations")
+def list_organizations(request: Request, user_id: int = Depends(token_user_id)):
+    """List organizations visible to the authenticated user for organization selection."""
+    items = []
+    for org in request.app.state.memberships.organizations.values():
+        role = request.app.state.memberships.user_role(user_id, org.id)
+        if role is not None:
+            items.append({"id": org.id, "name": org.name, "role": role})
+    return {"items": items}
+
 @router.post("/organizations", status_code=201)
 def create_organization(payload: OrganizationInput, request: Request, user_id: int = Depends(token_user_id)):
     org = request.app.state.memberships.create_organization(payload.name, user_id)
