@@ -62,6 +62,8 @@ jobs:
           done
 
       - name: Seed E2E test data
+        env:
+          PYTHONPATH: .
         run: |
           ENVIRONMENT=staging STAGING_SEED_ENABLED=true \
             STAGING_TEST_EMAIL=dina.test@example.com \
