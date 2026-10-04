@@ -169,8 +169,9 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('bottom-more')));
       await tester.pumpAndSettle();
-      final Finder overflowList = find.byKey(
-        const ValueKey<String>('overflow-navigation'),
+      expect(
+        find.byKey(const ValueKey<String>('overflow-navigation')),
+        findsOneWidget,
       );
       final Finder settingsItem = find.byKey(
         const ValueKey<String>('more-settings'),
