@@ -260,6 +260,11 @@ void main() {
           'GET',
           '/api/v1/organizations',
           organizationsJson(<String>['شرکت الف', 'شرکت ب']),
+        )
+        ..onJson(
+          'GET',
+          '/api/v1/organizations/org-1/trial-balance',
+          trialBalanceJson(),
         );
 
       await tester.pumpDina(transport: transport, store: store);
