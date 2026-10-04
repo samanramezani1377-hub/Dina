@@ -198,6 +198,22 @@ def create_payment_attempt(
         raise
 
 
+@router.get("/{organization_id}/payments/summary")
+def payment_summary(
+    organization_id: int,
+    request: Request,
+    caller: Caller = Depends(accounting_caller),
+):
+    import psycopg
+    from psycopg.rows import dict_row
+    with psycopg.connect(_db(request), row_factory=dict_row) as cn:
+        summary = cn.execute(
+            """SELECT status, COUNT(*) AS count, COALESCE(SUM(amount),0) AS amount
+               FROM payment_attempts WHERE organization_id=%s
+               GROUP BY status ORDER BY status""", (organization_id,)
+        ).fetchall()
+    return {"items": _json([dict(x) for x in summary])}
+
 @router.get("/{organization_id}/payments/attempts")
 def list_payment_attempts(
     organization_id: int,
