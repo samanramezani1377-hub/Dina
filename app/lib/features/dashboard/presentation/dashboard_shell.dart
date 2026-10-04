@@ -172,6 +172,7 @@ class _DestinationBody extends StatelessWidget {
         key: const ValueKey<String>('dashboard-home'),
         organizationName: organizationNameFor(scope),
         userLabel: scope.authController.user?.label ?? '',
+        onNavigate: _select,
       );
     }
     return AccountingWorkspace(
