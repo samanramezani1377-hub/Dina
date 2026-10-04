@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:forui/forui.dart';
 import '../features/auth/data/auth_api.dart';
 import '../features/auth/data/auth_repository.dart';
@@ -59,7 +60,12 @@ class _DinaAppState extends State<DinaApp> {
         ),
       ),
       locale: AppTheme.locale, supportedLocales: AppTheme.supportedLocales,
-      localizationsDelegates: const <LocalizationsDelegate<Object?>>[],
+      localizationsDelegates: const <LocalizationsDelegate<Object?>>[
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        FLocalizations.delegate,
+      ],
       home: const AuthGate(),
     ),
   );
