@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:forui/forui.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import '../features/auth/data/auth_api.dart';
 import '../features/auth/data/auth_repository.dart';
@@ -51,6 +52,15 @@ class _DinaAppState extends State<DinaApp> {
     child: MaterialApp(
       title: 'دینا', debugShowCheckedModeBanner: false,
       theme: AppTheme.light(), darkTheme: AppTheme.dark(), themeMode: ThemeMode.system,
+      builder: (context, child) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: FTheme(
+          data: Theme.brightnessOf(context) == Brightness.dark
+              ? AppTheme.foruiDark()
+              : AppTheme.foruiLight(),
+          child: FTooltipGroup(child: child ?? const SizedBox.shrink()),
+        ),
+      ),
       locale: AppTheme.locale, supportedLocales: AppTheme.supportedLocales,
       localizationsDelegates: const <LocalizationsDelegate<Object?>>[
         GlobalMaterialLocalizations.delegate, GlobalWidgetsLocalizations.delegate, GlobalCupertinoLocalizations.delegate,
