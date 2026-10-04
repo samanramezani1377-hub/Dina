@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../app/app_scope.dart';
 import '../../../app/theme/app_theme.dart';
@@ -35,7 +36,30 @@ class _DashboardShellState extends State<DashboardShell> {
     final String organizationName = organizationNameFor(scope);
     final String userLabel = auth.user?.label ?? '';
 
-    return LayoutBuilder(
+    final Map<ShortcutActivator, VoidCallback> shortcuts = <ShortcutActivator, VoidCallback>{
+      SingleActivator(LogicalKeyboardKey.keyG, control: true): () => _select('chart-of-accounts'),
+      SingleActivator(LogicalKeyboardKey.f2): () => _select('chart-of-accounts'),
+      SingleActivator(LogicalKeyboardKey.f4): () => _select('journal-entry'),
+      SingleActivator(LogicalKeyboardKey.keyY, control: true): () => _select('trial-balance'),
+      SingleActivator(LogicalKeyboardKey.keyB, control: true): () => _select('ledger'),
+      SingleActivator(LogicalKeyboardKey.keyL, control: true): () => _select('customers'),
+      SingleActivator(LogicalKeyboardKey.keyD, control: true): () => _select('cash-accounts'),
+      SingleActivator(LogicalKeyboardKey.keyP, control: true): () => _select('payments'),
+      SingleActivator(LogicalKeyboardKey.f9): () => _select('checks'),
+      SingleActivator(LogicalKeyboardKey.f8): () => _select('cash-accounts'),
+      SingleActivator(LogicalKeyboardKey.f3): () => _select('products'),
+      SingleActivator(LogicalKeyboardKey.keyF, control: true): () => _select('customers'),
+      SingleActivator(LogicalKeyboardKey.keyJ, shift: true): () => _select('journal-entry'),
+      SingleActivator(LogicalKeyboardKey.keyX, control: true): () => _select('inventory'),
+      SingleActivator(LogicalKeyboardKey.f12): () => _select('reports'),
+      SingleActivator(LogicalKeyboardKey.keyT, alt: true): () => _select('tax'),
+      SingleActivator(LogicalKeyboardKey.keyS, alt: true): () => _select('settings'),
+      SingleActivator(LogicalKeyboardKey.escape): () => _select('dashboard'),
+    };
+
+    return CallbackShortcuts(
+      bindings: shortcuts,
+      child: LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final bool wide = Breakpoints.isWide(constraints.maxWidth);
         return Scaffold(
@@ -82,6 +106,8 @@ class _DashboardShellState extends State<DashboardShell> {
                 ),
         );
       },
+    );
+      ),
     );
   }
 
