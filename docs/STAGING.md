@@ -1,6 +1,6 @@
 # محیط تست پایدار دینا
 
-این محیط دیگر وابسته به GitHub Actions و Quick Tunnel نیست.
+این محیط دیگر وابسته به GitHub Actions و Quick Tunnel نیست؛ PostgreSQL خارج از Jobهای CI قرار دارد و داده‌ها بین restart/deploy سرویس باقی می‌مانند.
 
 ## معماری
 - Backend: FastAPI
@@ -20,8 +20,8 @@
 این حساب فقط برای staging است و نباید برای production استفاده شود.
 
 ## راه‌اندازی
-1. فایل render.yaml را به‌عنوان Render Blueprint متصل و deploy کنید.
-2. Render یک Web Service و PostgreSQL دائمی می‌سازد.
+1. فایل render.yaml را به‌عنوان Render Blueprint متصل و deploy کنید. این Blueprint وب‌سرویس HTTPS و PostgreSQL را می‌سازد.
+2. Render یک Web Service و PostgreSQL می‌سازد. برای ماندگاری نامحدود، دیتابیس Free را به پلن پولی ارتقا دهید؛ Free Postgres فعلاً ۳۰ روز بعد از ساخت منقضی می‌شود.
 3. readiness باید روی /health/ready سبز شود.
 4. workflow «Dina persistent staging E2E» را دستی اجرا کنید.
 5. آرتیفکت dina-staging-apk همان APK متصل به backend پایدار است.
