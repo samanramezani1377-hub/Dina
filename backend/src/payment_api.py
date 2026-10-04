@@ -1,6 +1,8 @@
 from __future__ import annotations
 from decimal import Decimal
 from typing import Protocol, Any
+import hmac
+import os
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from .errors import ApiError, ErrorCode
@@ -51,6 +53,11 @@ def create_payment_attempt(organization_id: int, payload: PaymentAttemptInput, r
         existing = cn.execute("SELECT * FROM payment_attempts WHERE organization_id=%s AND provider=%s AND idempotency_key=%s",
                               (organization_id, payload.provider, key)).fetchone()
         if existing: return _json(dict(existing))
+        if payload.subscription_id is not None:
+            subscription = cn.execute("SELECT id FROM subscriptions WHERE id=%s AND organization_id=%s",
+                                     (payload.subscription_id, organization_id)).fetchone()
+            if not subscription:
+                raise ApiError(ErrorCode.NOT_FOUND, "subscription not found")
         try:
             row = cn.execute("""INSERT INTO payment_attempts
                 (organization_id,provider,idempotency_key,amount,currency,subscription_id,metadata)
@@ -75,6 +82,10 @@ def list_payment_attempts(organization_id: int, request: Request,
 
 @router.post("/{organization_id}/payments/webhook", status_code=202)
 def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request: Request):
+    configured_secret = os.environ.get("PAYMENT_WEBHOOK_SECRET", "").strip()
+    supplied_secret = request.headers.get("X-Payment-Webhook-Secret", "")
+    if not configured_secret or not hmac.compare_digest(supplied_secret, configured_secret):
+        raise ApiError(ErrorCode.PERMISSION_DENIED, "invalid payment webhook signature")
     if payload.organization_id not in (None, organization_id):
         raise ApiError(ErrorCode.VALIDATION_ERROR, "organization mismatch")
     allowed = {"created","pending","succeeded","failed","cancelled"}
