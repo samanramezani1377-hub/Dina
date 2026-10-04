@@ -57,8 +57,9 @@ class _DashboardShellState extends State<DashboardShell> {
       SingleActivator(LogicalKeyboardKey.escape): () => _select('dashboard'),
     };
 
-    return CallbackShortcuts(
-      bindings: shortcuts,
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: CallbackShortcuts(bindings: shortcuts,
       child: LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final bool wide = Breakpoints.isWide(constraints.maxWidth);
