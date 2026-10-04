@@ -26,6 +26,11 @@ Future<DinaAppDependencies> pumpSignedIn(
       'GET',
       '/api/v1/organizations',
       organizationsJson(<String>['شرکت الف', 'شرکت ب']),
+    )
+    ..onJson(
+      'GET',
+      '/api/v1/organizations/org-1/trial-balance',
+      trialBalanceJson(),
     );
   return tester.pumpDina(
     transport: transport,
@@ -166,6 +171,11 @@ void main() {
           'GET',
           '/api/v1/organizations',
           organizationsJson(<String>['شرکت الف', 'شرکت ب']),
+        )
+        ..onJson(
+          'GET',
+          '/api/v1/organizations/org-1/trial-balance',
+          trialBalanceJson(),
         );
 
       await tester.pumpDina(
@@ -190,6 +200,11 @@ void main() {
           'GET',
           '/api/v1/organizations',
           organizationsJson(<String>['شرکت الف', 'شرکت ب']),
+        )
+        ..onJson(
+          'GET',
+          '/api/v1/organizations/org-2/trial-balance',
+          trialBalanceJson(),
         );
       await tester.pumpDina(
         transport: restarted,
