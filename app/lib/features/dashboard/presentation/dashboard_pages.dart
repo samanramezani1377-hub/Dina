@@ -482,7 +482,7 @@ class _DataFrameState extends State<DataFrame> {
         Card(
           child: ListTile(
             title: Text(valueOf(item['name'] ?? item['invoice_no'] ?? item['document_no'] ?? item['id'])),
-            subtitle: Text(item.entries.take(5).map((e) => e.key + ': ' + valueOf(e.value)).join(' | ')),
+            subtitle: Text(item.entries.take(5).map((e) => '${e.key}: ${valueOf(e.value)}').join(' | ')),
           ),
         ),
     ];
