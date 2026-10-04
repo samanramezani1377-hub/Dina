@@ -4,7 +4,6 @@ pytest==8.3.4
 httpx==0.28.1
 argon2-cffi==25.1.0
 pydantic-settings==2.15.0
-# Drives the PostgreSQL audit-store integration tests against the real database
-# in CI. Only those tests import it, so the rest of the suite still runs without
-# a server. The `binary` extra avoids needing libpq headers in the image.
 psycopg[binary]==3.2.3
+openpyxl==3.1.5
+reportlab==4.2.5
