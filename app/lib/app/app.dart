@@ -88,6 +88,7 @@ class _DinaAppState extends State<DinaApp> {
           ),
           locale: AppTheme.locale,
           supportedLocales: AppTheme.supportedLocales,
+          localizationsDelegates: FLocalizations.localizationsDelegates,
           home: const AuthGate(),
         ),
       );
