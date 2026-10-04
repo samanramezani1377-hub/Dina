@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:forui/forui.dart';
 
 abstract final class AppTheme {
+  static FThemeData foruiLight() => FTheme.neutral.light.desktop;
+  static FThemeData foruiDark() => FTheme.neutral.dark.desktop;
   static const Locale locale = Locale('fa', 'IR');
   static const List<Locale> supportedLocales = <Locale>[locale];
   static ThemeData light() => _base(ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4), brightness: Brightness.light));
