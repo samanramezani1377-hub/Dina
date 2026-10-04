@@ -2,8 +2,6 @@ name: Dina persistent staging E2E
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 */6 * * *"
 
 jobs:
   e2e:
