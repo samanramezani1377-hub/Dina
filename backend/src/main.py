@@ -31,7 +31,7 @@ from .error_log_api import router as error_log_router
 from .management_api import router as management_router
 from .business_modules_api import router as business_modules_router
 from .financial_reports_api import router as financial_reports_router
-from .payment_api import router as payment_router
+from .payment_api import public_router as payment_public_router, router as payment_router
 from .export_api import router as export_router
 from .ledger_api import router as ledger_router
 from .operations_api import router as operations_router
@@ -77,6 +77,7 @@ app.include_router(management_router)
 app.include_router(business_modules_router)
 app.include_router(financial_reports_router)
 app.include_router(payment_router)
+app.include_router(payment_public_router)
 app.include_router(export_router)
 # Handlers are dispatched by exception type at request time, so this can sit
 # after the routers without changing which failure goes where.
