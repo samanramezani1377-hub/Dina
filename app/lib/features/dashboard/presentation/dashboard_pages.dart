@@ -9,9 +9,10 @@ String valueOf(Object? value) => value?.toString() ?? '';
 String pathFor(String org, String tail) => '/organizations/$org/$tail';
 
 class DashboardHomePage extends StatefulWidget {
-  const DashboardHomePage({required this.organizationName, required this.userLabel, super.key});
+  const DashboardHomePage({required this.organizationName, required this.userLabel, this.onNavigate, super.key});
   final String organizationName;
   final String userLabel;
+  final ValueChanged<String>? onNavigate;
   @override State<DashboardHomePage> createState() => _DashboardHomePageState();
 }
 class _DashboardHomePageState extends State<DashboardHomePage> {
@@ -19,6 +20,36 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
     final scope = AppScope.of(context);
     return scope.api.get(pathFor(scope.authController.selectedOrganizationId!, 'trial-balance'));
   }
+  Future<void> _showQuickActions(BuildContext context) async {
+    final actions = <Map<String, Object>>[
+      {'id': 'sales', 'title': 'ثبت فاکتور فروش', 'icon': Icons.point_of_sale_outlined},
+      {'id': 'purchases', 'title': 'ثبت فاکتور خرید', 'icon': Icons.shopping_cart_outlined},
+      {'id': 'journal-entry', 'title': 'ثبت سند حسابداری', 'icon': Icons.post_add_outlined},
+      {'id': 'payments', 'title': 'ثبت دریافت و پرداخت', 'icon': Icons.payments_outlined},
+      {'id': 'checks', 'title': 'مدیریت چک‌ها', 'icon': Icons.fact_check_outlined},
+    ];
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.all(12),
+          children: [
+            const ListTile(title: Text('عملیات سریع'), subtitle: Text('عملیات موردنیاز را انتخاب کنید.')),
+            for (final action in actions)
+              ListTile(
+                leading: Icon(action['icon'] as IconData),
+                title: Text(action['title'] as String),
+                onTap: () => Navigator.of(sheetContext).pop(action['id'] as String),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked != null) onNavigate?.call(picked);
+  }
+
   @override Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -35,7 +66,7 @@ class _DashboardHomePageState extends State<DashboardHomePage> {
                 const SizedBox(height: 4),
                 Text('${widget.organizationName} • خوش آمدید، ${widget.userLabel}'),
               ])),
-              FilledButton.icon(onPressed: () {}, icon: const Icon(Icons.add), label: const Text('عملیات جدید')),
+              FilledButton.icon(onPressed: onNavigate == null ? null : () => _showQuickActions(context), icon: const Icon(Icons.add), label: const Text('عملیات جدید')),
             ]),
           ),
         ),
@@ -355,39 +386,109 @@ class SettingsPage extends StatelessWidget {
 
 class DataFrame extends StatefulWidget {
   const DataFrame({required this.title, required this.load, this.create, this.formatter, super.key});
-  final String title; final Future<JsonMap?> Function() load; final Widget? create; final List<Widget> Function(JsonMap)? formatter;
-  @override State<DataFrame> createState() => _DataFrameState();
+  final String title;
+  final Future<JsonMap?> Function() load;
+  final Widget? create;
+  final List<Widget> Function(JsonMap)? formatter;
+
+  @override
+  State<DataFrame> createState() => _DataFrameState();
 }
+
 class _DataFrameState extends State<DataFrame> {
   late Future<JsonMap?> future;
-  @override void initState() { super.initState(); future = widget.load(); }
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    future = widget.load();
+    _search.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
   void retry() => setState(() => future = widget.load());
-  @override Widget build(BuildContext context) => FutureBuilder<JsonMap?>(
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<JsonMap?>(
     future: future,
     builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
-      if (snapshot.hasError) return ErrorView(error: snapshot.error.toString(), onRetry: retry);
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (snapshot.hasError) {
+        return ErrorView(error: snapshot.error.toString(), onRetry: retry);
+      }
       final data = snapshot.data ?? <String,Object?>{};
       final rows = widget.formatter?.call(data) ?? defaultRows(data);
-      return ListView(padding: const EdgeInsets.all(20), children: [
-        Text(widget.title, style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 12),
-        if (widget.create != null) Card(child: Padding(padding: const EdgeInsets.all(14), child: widget.create!)),
-        const SizedBox(height: 12),
-        ...rows,
-      ]);
+      return ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(widget.title, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+              ),
+              IconButton(onPressed: retry, tooltip: 'تازه‌سازی', icon: const Icon(Icons.refresh)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _search,
+            textInputAction: TextInputAction.search,
+            decoration: const InputDecoration(
+              labelText: 'جستجو',
+              hintText: 'نام، شماره، کد یا شرح را وارد کنید',
+              prefixIcon: Icon(Icons.search),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (widget.create != null)
+            Card(child: Padding(padding: const EdgeInsets.all(14), child: widget.create!)),
+          const SizedBox(height: 12),
+          ...rows,
+        ],
+      );
     },
   );
+
   List<Widget> defaultRows(JsonMap data) {
-    final raw = data['items'] ?? data['accounts'];
+    final raw = data['items'] ?? data['accounts'] ?? data['results'];
     final items = raw is List ? raw.whereType<JsonMap>() : <JsonMap>[];
-    if (items.isEmpty) return const [Card(child: ListTile(title: Text('داده‌ای ثبت نشده است.')))];
-    return [for (final item in items) Card(child: ListTile(
-      title: Text(valueOf(item['name'] ?? item['invoice_no'] ?? item['id'])),
-      subtitle: Text(item.entries.take(5).map((e) => '${e.key}: ${valueOf(e.value)}').join(' | ')),
-    ))];
+    final query = _search.text.trim().toLowerCase();
+    final filtered = query.isEmpty
+        ? items
+        : items.where((item) => item.values.any((value) => valueOf(value).toLowerCase().contains(query))).toList();
+
+    if (filtered.isEmpty) {
+      return [
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.inbox_outlined),
+            title: Text(query.isEmpty ? 'داده‌ای ثبت نشده است.' : 'موردی با این جستجو پیدا نشد.'),
+            subtitle: query.isEmpty ? const Text('با ثبت نخستین مورد، اطلاعات این بخش اینجا نمایش داده می‌شود.') : const Text('عبارت جستجو را تغییر دهید یا فیلتر را پاک کنید.'),
+          ),
+        ),
+      ];
+    }
+
+    return [
+      for (final item in filtered)
+        Card(
+          child: ListTile(
+            title: Text(valueOf(item['name'] ?? item['invoice_no'] ?? item['document_no'] ?? item['id'])),
+            subtitle: Text(item.entries.take(5).map((e) => e.key + ': ' + valueOf(e.value)).join(' | ')),
+          ),
+        ),
+    ];
   }
 }
+
 class ErrorView extends StatelessWidget {
   const ErrorView({required this.error, required this.onRetry, super.key});
   final String error; final VoidCallback onRetry;
