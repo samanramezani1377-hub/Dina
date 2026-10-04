@@ -13,7 +13,7 @@ abstract final class AppConfig {
   /// backend running on the developer machine.
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8000',
+    defaultValue: 'https://dina-api.onrender.com',
   );
 
   /// Root of every versioned endpoint the client talks to.
