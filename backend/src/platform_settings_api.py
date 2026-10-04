@@ -40,8 +40,10 @@ def get_setting(key:str,_:int=Depends(require_platform_admin)):
     if key not in ALLOWED_KEYS: raise ApiError(ErrorCode.NOT_FOUND,"setting not found")
     with _conn() as c: row=c.execute("SELECT setting_value,is_secret,updated_at FROM platform_settings WHERE setting_key=%s",(key,)).fetchone()
     if not row: return {"key":key,"configured":False,"value":""}
+    if row["is_secret"]:
+        return {"key":key,"configured":True,"is_secret":True,"value":"","masked":"••••••••","updated_at":row["updated_at"]}
     value=_fernet().decrypt(row["setting_value"].encode()).decode()
-    return {"key":key,"configured":True,"is_secret":row["is_secret"],"value":value,"updated_at":row["updated_at"]}
+    return {"key":key,"configured":True,"is_secret":False,"value":value,"updated_at":row["updated_at"]}
 
 @router.put("/{key}")
 def put_setting(key:str,p:SettingIn,user_id:int=Depends(require_platform_admin)):
