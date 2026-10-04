@@ -5,15 +5,23 @@ abstract final class AppTheme {
   static const Locale locale = Locale('fa', 'IR');
   static const List<Locale> supportedLocales = <Locale>[locale];
 
-  static FThemeData foruiLight() => FTheme.neutral.light.desktop;
-  static FThemeData foruiDark() => FTheme.neutral.dark.desktop;
+  static FThemeData foruiLight() => FThemes.neutral.light.desktop;
+  static FThemeData foruiDark() => FThemes.neutral.dark.desktop;
 
   static ThemeData light() => _materialTheme(Brightness.light);
   static ThemeData dark() => _materialTheme(Brightness.dark);
 
   static ThemeData _materialTheme(Brightness brightness) {
-    final ColorScheme scheme = ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4), brightness: brightness);
-    return ThemeData(useMaterial3: true, colorScheme: scheme, fontFamily: 'Vazirmatn', visualDensity: VisualDensity.standard);
+    final ColorScheme scheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF6750A4),
+      brightness: brightness,
+    );
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: scheme,
+      fontFamily: 'Vazirmatn',
+      visualDensity: VisualDensity.standard,
+    );
   }
 }
 
