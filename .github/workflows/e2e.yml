@@ -1,68 +1,181 @@
-name: Deployed E2E smoke
+name: Dina E2E — real backend + Android APK
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      base_url:
-        description: "Public HTTPS URL of the running Dina Codespace backend"
-        required: true
-        type: string
 
 jobs:
   smoke-and-apk:
-    name: Backend smoke and test APK
+    name: Real backend, public tunnel and test APK
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dina
+          POSTGRES_PASSWORD: dina
+          POSTGRES_DB: dina_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dina -d dina_e2e"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
     env:
-      DINA_BASE_URL: ${{ inputs.base_url }}
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: '5432'
+      POSTGRES_USER: dina
+      POSTGRES_PASSWORD: dina
+      POSTGRES_DB: dina_e2e
+      PGPASSWORD: dina
+      DATABASE_URL: postgresql://dina:dina@127.0.0.1:5432/dina_e2e
+      ENVIRONMENT: codespace
+      SECRET_KEY: dina-e2e-ephemeral-secret-key
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: '60'
+
     steps:
       - uses: actions/checkout@v4
-      - name: Check deployed backend
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Apply database migrations
+        run: |
+          set -euo pipefail
+          for f in database/migrations/*.sql; do
+            echo "Applying $f"
+            psql -v ON_ERROR_STOP=1 \
+              --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \
+              --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+              --file "$f"
+          done
+
+      - name: Start real Dina backend
+        run: |
+          set -euo pipefail
+          nohup python -m uvicorn src.main:app --app-dir backend \
+            --host 0.0.0.0 --port 8000 > /tmp/dina-backend.log 2>&1 &
+          echo $! > /tmp/dina-backend.pid
+
+          for _ in {1..60}; do
+            if curl -fsS http://127.0.0.1:8000/health/ready >/dev/null; then
+              echo "Dina backend is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          cat /tmp/dina-backend.log
+          exit 1
+
+      - name: Install Cloudflare Quick Tunnel
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/cloudflared \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /tmp/cloudflared
+
+      - name: Start public HTTPS tunnel
+        run: |
+          set -euo pipefail
+          nohup /tmp/cloudflared tunnel --url http://127.0.0.1:8000 --no-autoupdate \
+            > /tmp/cloudflared.log 2>&1 &
+          echo $! > /tmp/cloudflared.pid
+
+          for _ in {1..60}; do
+            DINA_BASE_URL="$(grep -oE 'https://[-a-z0-9]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)"
+            if [ -n "$DINA_BASE_URL" ]; then
+              echo "DINA_BASE_URL=$DINA_BASE_URL" >> "$GITHUB_ENV"
+              echo "Public Dina backend: $DINA_BASE_URL"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          cat /tmp/cloudflared.log
+          exit 1
+
+      - name: Check public backend
         run: python3 scripts/performance_smoke.py
+        env:
+          DINA_BASE_URL: ${{ env.DINA_BASE_URL }}
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.5"
+          flutter-version: '3.24.5'
           channel: stable
           cache: true
           pub-cache: true
+
       - name: Generate Android platform files
         working-directory: app
         run: flutter create . --platforms=android --project-name dina_app
+
       - name: Get packages
         working-directory: app
         run: flutter pub get
+
       - name: Analyze
         working-directory: app
         run: flutter analyze --fatal-infos --fatal-warnings
+
       - name: Test
         working-directory: app
         run: flutter test
-      - name: Build test APK against Codespace
+
+      - name: Build test APK against real backend
         working-directory: app
         run: flutter build apk --release --dart-define=API_BASE_URL="$DINA_BASE_URL"
+
       - name: Verify APK
         working-directory: app
         run: |
           set -euo pipefail
           apk=build/app/outputs/flutter-apk/app-release.apk
           test -s "$apk"
+          ls -lh "$apk"
           sha256sum "$apk"
+
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: dina-codespace-test-apk
+          name: dina-real-backend-test-apk
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
-      - name: Write test summary
+
+      - name: Write E2E summary
         run: |
           {
-            echo "## دینا — محیط تست Codespaces"
+            echo "## Dina — تست E2E واقعی"
             echo
             echo "- Backend: $DINA_BASE_URL"
-            echo "- Health: موفق"
+            echo "- PostgreSQL: واقعی و موقت در همین Job"
+            echo "- Backend health: موفق"
             echo "- Flutter analyze: موفق"
             echo "- Flutter tests: موفق"
-            echo "- APK: در بخش Artifacts موجود است"
+            echo "- APK: dina-real-backend-test-apk"
             echo
-            echo "این APK با همین Backend ساخته شده است."
+            echo "این APK با Backend واقعی همین اجرای CI ساخته شده است."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show backend log on failure
+        if: failure()
+        run: |
+          echo "=== Dina backend log ==="
+          cat /tmp/dina-backend.log || true
+          echo "=== Cloudflare tunnel log ==="
+          cat /tmp/cloudflared.log || true
