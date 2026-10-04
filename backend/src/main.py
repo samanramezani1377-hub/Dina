@@ -100,6 +100,14 @@ class JournalInput(BaseModel):
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "dina-api"}
 
+@app.get("/health/ready")
+def readiness(request: Request) -> dict[str, str]:
+    if app.state.settings.is_test:
+        return {"status": "ok", "service": "dina-api", "database": "test"}
+    with _audit_connect(app.state.settings.database_url) as cn:
+        cn.execute("SELECT 1").fetchone()
+    return {"status": "ok", "service": "dina-api", "database": "ok"}
+
 
 @app.post("/api/v1/accounting/journals/validate")
 def validate(payload: JournalInput, request: Request = None) -> dict[str, object]:
