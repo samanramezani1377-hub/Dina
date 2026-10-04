@@ -169,7 +169,9 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('bottom-more')));
       await tester.pumpAndSettle();
-      final Finder overflowList = find.byType(ListView).last;
+      final Finder overflowList = find.byKey(
+        const ValueKey<String>('overflow-navigation'),
+      );
       await tester.drag(overflowList, const Offset(0, -500));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey<String>('more-settings')));
