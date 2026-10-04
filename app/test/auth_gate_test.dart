@@ -98,6 +98,11 @@ void main() {
           'GET',
           '/api/v1/organizations',
           organizationsJson(<String>['شرکت الف']),
+        )
+        ..onJson(
+          'GET',
+          '/api/v1/organizations/org-1/trial-balance',
+          trialBalanceJson(),
         );
 
       await tester.pumpDina(
@@ -124,6 +129,11 @@ void main() {
           'GET',
           '/api/v1/organizations',
           organizationsJson(<String>['شرکت الف']),
+        )
+        ..onJson(
+          'GET',
+          '/api/v1/organizations/org-1/trial-balance',
+          trialBalanceJson(),
         );
 
       await tester.pumpDina(
@@ -200,6 +210,11 @@ void main() {
           'GET',
           '/api/v1/organizations',
           organizationsJson(<String>['شرکت الف']),
+        )
+        ..onJson(
+          'GET',
+          '/api/v1/organizations/org-1/trial-balance',
+          trialBalanceJson(),
         );
 
       await tester.pumpDina(
@@ -285,6 +300,11 @@ void main() {
           'GET',
           '/api/v1/organizations',
           organizationsJson(<String>['شرکت الف']),
+        )
+        ..onJson(
+          'GET',
+          '/api/v1/organizations/org-1/trial-balance',
+          trialBalanceJson(),
         );
 
       final InMemoryKeyValueStore store = InMemoryKeyValueStore(<String, String>{
