@@ -106,6 +106,16 @@ def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request:
                                  (payload.payment_attempt_id, organization_id)).fetchone()
             if not attempt: raise ApiError(ErrorCode.NOT_FOUND, "payment attempt not found")
             if payload.status is not None:
+                transitions = {
+                    "created": {"pending", "failed", "cancelled"},
+                    "pending": {"succeeded", "failed", "cancelled"},
+                    "succeeded": set(),
+                    "failed": set(),
+                    "cancelled": set(),
+                }
+                current = attempt["status"]
+                if payload.status != current and payload.status not in transitions[current]:
+                    raise ApiError(ErrorCode.VALIDATION_ERROR, "invalid payment status transition")
                 cn.execute("""UPDATE payment_attempts SET status=%s,
                     provider_reference=COALESCE(%s,provider_reference),updated_at=NOW() WHERE id=%s""",
                     (payload.status, payload.provider_reference, payload.payment_attempt_id))
