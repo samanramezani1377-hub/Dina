@@ -160,6 +160,16 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      - name: Ensure Android release networking permission
+        working-directory: app
+        run: |
+          set -euo pipefail
+          manifest=android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.INTERNET' "$manifest" || \
+            sed -i '/<manifest[^>]*>/a\\    <uses-permission android:name="android.permission.INTERNET" />' "$manifest"
+          grep -q 'android.permission.INTERNET' "$manifest"
+          echo 'Android INTERNET permission is present in the release manifest.'
+
       - name: Analyze
         working-directory: app
         run: flutter analyze --fatal-infos --fatal-warnings
@@ -167,6 +177,20 @@ jobs:
       - name: Test
         working-directory: app
         run: flutter test
+
+      - name: Verify app backend URL configuration
+        working-directory: app
+        env:
+          EXPECTED_API_BASE_URL: ${{ env.DINA_BASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_API_BASE_URL"
+          case "$EXPECTED_API_BASE_URL" in
+            https://*) ;;
+            *) echo 'DINA_BASE_URL must be HTTPS'; exit 1 ;;
+          esac
+          printf '%s\n' "$EXPECTED_API_BASE_URL" > /tmp/dina-backend-url.txt
+          echo "Flutter APK will use: $EXPECTED_API_BASE_URL/api/v1"
 
       - name: Build test APK against real backend
         working-directory: app
@@ -180,12 +204,22 @@ jobs:
           test -s "$apk"
           ls -lh "$apk"
           sha256sum "$apk"
+          command -v aapt >/dev/null
+          aapt dump permissions "$apk" | grep -q 'android.permission.INTERNET'
+          echo 'APK declares android.permission.INTERNET.'
 
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
           name: dina-real-backend-test-apk
           path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Upload backend URL manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: dina-e2e-backend-url
+          path: /tmp/dina-backend-url.txt
           if-no-files-found: error
 
       - name: Write E2E summary
