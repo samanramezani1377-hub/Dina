@@ -6,43 +6,116 @@ from fastapi.responses import StreamingResponse
 from .financial_reports_api import rows
 from .identity import Caller
 from .ledger_api import require_accounting_caller
+
 router=APIRouter(prefix="/api/v1/organizations",tags=["exports"])
+
 def _csv(filename,headers,records):
     buf=io.StringIO(); writer=csv.writer(buf); writer.writerow(headers)
     for r in records: writer.writerow([r.get(h,"") for h in headers])
     return StreamingResponse(iter([buf.getvalue().encode("utf-8-sig")]),media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition":f'attachment; filename="{filename}"'})
-@router.get("/{organization_id}/exports/trial-balance.csv")
-def trial_balance_csv(organization_id:int,request:Request,as_of:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+
+def _xlsx(filename,headers,records):
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
+    wb=Workbook(); ws=wb.active; ws.title="Dina"
+    ws.append(headers)
+    for r in records: ws.append([r.get(h,"") for h in headers])
+    ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
+    for i,h in enumerate(headers,1):
+        ws.column_dimensions[get_column_letter(i)].width=min(max(len(str(h))+2,12),32)
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    return StreamingResponse(iter([out.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":f'attachment; filename="{filename}"'})
+
+def _pdf(filename,title,headers,records):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+    out=io.BytesIO(); doc=SimpleDocTemplate(out,pagesize=landscape(A4),rightMargin=24,leftMargin=24,topMargin=24,bottomMargin=24)
+    styles=getSampleStyleSheet()
+    data=[headers]+[[str(r.get(h,"")) for h in headers] for r in records]
+    table=Table(data,repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),("GRID",(0,0),(-1,-1),0.25,colors.grey),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),7),
+        ("VALIGN",(0,0),(-1,-1),"TOP"),
+    ]))
+    doc.build([Paragraph(title,styles["Heading2"]),table]); out.seek(0)
+    return StreamingResponse(iter([out.getvalue()]),media_type="application/pdf",
+        headers={"Content-Disposition":f'attachment; filename="{filename}"'})
+
+def _trial_balance(organization_id,request,as_of):
     d=as_of or date.max
-    r=[dict(x) for x in rows(request,"""SELECT a.code,a.name,a.account_type,COALESCE(SUM(jl.debit),0) debit,
+    return [dict(x) for x in rows(request,"""SELECT a.code,a.name,a.account_type,COALESCE(SUM(jl.debit),0) debit,
         COALESCE(SUM(jl.credit),0) credit FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id AND je.organization_id=a.organization_id
         AND je.status='posted' AND je.entry_date<=%s WHERE a.organization_id=%s GROUP BY a.id ORDER BY a.code""",(d,organization_id))]
-    return _csv("dina-trial-balance.csv",["code","name","account_type","debit","credit"],r)
-@router.get("/{organization_id}/exports/ledger.csv")
-def ledger_csv(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+
+@router.get("/{organization_id}/exports/trial-balance.csv")
+def trial_balance_csv(organization_id:int,request:Request,as_of:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    r=_trial_balance(organization_id,request,as_of); return _csv("dina-trial-balance.csv",["code","name","account_type","debit","credit"],r)
+
+@router.get("/{organization_id}/exports/trial-balance.xlsx")
+def trial_balance_xlsx(organization_id:int,request:Request,as_of:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    r=_trial_balance(organization_id,request,as_of); return _xlsx("dina-trial-balance.xlsx",["code","name","account_type","debit","credit"],r)
+
+@router.get("/{organization_id}/exports/trial-balance.pdf")
+def trial_balance_pdf(organization_id:int,request:Request,as_of:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    r=_trial_balance(organization_id,request,as_of); return _pdf("dina-trial-balance.pdf","Dina - Trial Balance",["code","name","account_type","debit","credit"],r)
+
+def _ledger(organization_id,request,date_from,date_to):
     params=[organization_id]; where="je.organization_id=%s AND je.status IN ('posted','reversed')"
     if date_from: where+=" AND je.entry_date>=%s"; params.append(date_from)
     if date_to: where+=" AND je.entry_date<=%s"; params.append(date_to)
-    r=[dict(x) for x in rows(request,f"""SELECT a.code,a.name,je.document_no,je.entry_date,je.description,jl.debit,jl.credit
+    return [dict(x) for x in rows(request,f"""SELECT a.code,a.name,je.document_no,je.entry_date,je.description,jl.debit,jl.credit
         FROM journal_entries je JOIN journal_lines jl ON jl.journal_entry_id=je.id JOIN accounts a ON a.id=jl.account_id
         WHERE {where} ORDER BY je.entry_date,je.id,jl.id""",params)]
-    return _csv("dina-ledger.csv",["code","name","document_no","entry_date","description","debit","credit"],r)
+
+@router.get("/{organization_id}/exports/ledger.csv")
+def ledger_csv(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    h=["code","name","document_no","entry_date","description","debit","credit"]; return _csv("dina-ledger.csv",h,_ledger(organization_id,request,date_from,date_to))
+
+@router.get("/{organization_id}/exports/ledger.xlsx")
+def ledger_xlsx(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    h=["code","name","document_no","entry_date","description","debit","credit"]; return _xlsx("dina-ledger.xlsx",h,_ledger(organization_id,request,date_from,date_to))
+
+@router.get("/{organization_id}/exports/ledger.pdf")
+def ledger_pdf(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    h=["code","name","document_no","entry_date","description","debit","credit"]; return _pdf("dina-ledger.pdf","Dina - Ledger",h,_ledger(organization_id,request,date_from,date_to))
+
+def _documents(organization_id,request,table,date_from,date_to):
+    params=[organization_id]; where="organization_id=%s AND status='posted'"
+    if date_from: where+=" AND issue_date>=%s"; params.append(date_from)
+    if date_to: where+=" AND issue_date<=%s"; params.append(date_to)
+    return [dict(x) for x in rows(request,f"SELECT invoice_no,issue_date,subtotal,discount,tax,total,status,journal_entry_id FROM {table} WHERE {where} ORDER BY issue_date,id",params)]
+
 @router.get("/{organization_id}/exports/sales.csv")
 def sales_csv(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
-    params=[organization_id]; where="organization_id=%s AND status='posted'"
-    if date_from: where+=" AND issue_date>=%s"; params.append(date_from)
-    if date_to: where+=" AND issue_date<=%s"; params.append(date_to)
-    r=[dict(x) for x in rows(request,f"SELECT invoice_no,issue_date,subtotal,discount,tax,total,status,journal_entry_id FROM sales WHERE {where} ORDER BY issue_date,id",params)]
-    return _csv("dina-sales.csv",["invoice_no","issue_date","subtotal","discount","tax","total","status","journal_entry_id"],r)
+    h=["invoice_no","issue_date","subtotal","discount","tax","total","status","journal_entry_id"]; return _csv("dina-sales.csv",h,_documents(organization_id,request,"sales",date_from,date_to))
+
+@router.get("/{organization_id}/exports/sales.xlsx")
+def sales_xlsx(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    h=["invoice_no","issue_date","subtotal","discount","tax","total","status","journal_entry_id"]; return _xlsx("dina-sales.xlsx",h,_documents(organization_id,request,"sales",date_from,date_to))
+
+@router.get("/{organization_id}/exports/sales.pdf")
+def sales_pdf(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    h=["invoice_no","issue_date","subtotal","discount","tax","total","status","journal_entry_id"]; return _pdf("dina-sales.pdf","Dina - Sales",h,_documents(organization_id,request,"sales",date_from,date_to))
+
 @router.get("/{organization_id}/exports/purchases.csv")
 def purchases_csv(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
-    params=[organization_id]; where="organization_id=%s AND status='posted'"
-    if date_from: where+=" AND issue_date>=%s"; params.append(date_from)
-    if date_to: where+=" AND issue_date<=%s"; params.append(date_to)
-    r=[dict(x) for x in rows(request,f"SELECT invoice_no,issue_date,subtotal,discount,tax,total,status,journal_entry_id FROM purchases WHERE {where} ORDER BY issue_date,id",params)]
-    return _csv("dina-purchases.csv",["invoice_no","issue_date","subtotal","discount","tax","total","status","journal_entry_id"],r)
+    h=["invoice_no","issue_date","subtotal","discount","tax","total","status","journal_entry_id"]; return _csv("dina-purchases.csv",h,_documents(organization_id,request,"purchases",date_from,date_to))
+
+@router.get("/{organization_id}/exports/purchases.xlsx")
+def purchases_xlsx(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    h=["invoice_no","issue_date","subtotal","discount","tax","total","status","journal_entry_id"]; return _xlsx("dina-purchases.xlsx",h,_documents(organization_id,request,"purchases",date_from,date_to))
+
+@router.get("/{organization_id}/exports/purchases.pdf")
+def purchases_pdf(organization_id:int,request:Request,date_from:date|None=Query(None),date_to:date|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
+    h=["invoice_no","issue_date","subtotal","discount","tax","total","status","journal_entry_id"]; return _pdf("dina-purchases.pdf","Dina - Purchases",h,_documents(organization_id,request,"purchases",date_from,date_to))
+
 @router.get("/{organization_id}/exports/inventory.csv")
 def inventory_csv(organization_id:int,request:Request,warehouse_id:int|None=Query(None),product_id:int|None=Query(None),caller:Caller=Depends(require_accounting_caller)):
     params=[organization_id]; where="sm.organization_id=%s"
