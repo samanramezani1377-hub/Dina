@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../app/app_scope.dart';
 import '../../../app/api/api_client.dart';
 import 'error_center_page.dart';
+import 'platform_admin_page.dart';
 
 class ManagementPage extends StatefulWidget {
   const ManagementPage({required this.org, super.key});
@@ -32,6 +33,12 @@ class _ManagementPageState extends State<ManagementPage> {
       subtitle:const Text('ثبت‌های تغییر سازمان، سند، پرداخت و اشتراک.'),
       trailing:const Icon(Icons.arrow_forward_ios),
       onTap:()=>showDialog<void>(context:context,builder:(ctx)=>_AuditDialog(future:audit())),
+    )),
+    Card(child:ListTile(
+      leading:const Icon(Icons.security_outlined),title:const Text('مدیریت پلتفرم'),
+      subtitle:const Text('کنترل مدیریتی کاربران، سازمان‌ها، پلن‌ها و پرداخت‌ها.'),
+      trailing:const Icon(Icons.arrow_forward_ios),
+      onTap:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>const PlatformAdminPage())),
     )),
     Card(child:ListTile(
       leading:const Icon(Icons.bug_report_outlined),title:const Text('مرکز خطا'),
