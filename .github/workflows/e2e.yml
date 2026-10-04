@@ -33,7 +33,6 @@ jobs:
       PGPASSWORD: dina
       DATABASE_URL: postgresql://dina:dina@127.0.0.1:5432/dina_e2e
       ENVIRONMENT: codespace
-      SECRET_KEY: dina-e2e-ephemeral-secret-key
       JWT_ALGORITHM: HS256
       JWT_EXPIRE_MINUTES: '60'
 
@@ -62,6 +61,14 @@ jobs:
               --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
               --file "$f"
           done
+
+      - name: Generate ephemeral backend secret
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print(f"SECRET_KEY={secrets.token_urlsafe(48)}")
+          PY
 
       - name: Start real Dina backend
         run: |
