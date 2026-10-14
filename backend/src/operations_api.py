@@ -83,15 +83,17 @@ class CustomerInput(BaseModel):
 class InvoiceInput(BaseModel):
     customer_id: int
     invoice_no: str = Field(min_length=1, max_length=100)
-    total: Decimal = Field(ge=0)
+    total: Decimal = Field(gt=0)
     issue_date: date
     due_date: date | None = None
+    receivable_account_id: int
+    revenue_account_id: int
 class PaymentInput(BaseModel):
     amount: Decimal = Field(gt=0)
     method: str = Field(default="other", max_length=50)
     reference: str | None = Field(default=None, max_length=200)
-    cash_account_id: int | None = None
-    receivable_account_id: int | None = None
+    cash_account_id: int
+    receivable_account_id: int
 class SubscriptionInput(BaseModel):
     plan: str = Field(min_length=1, max_length=100)
     status: str = "active"
@@ -248,10 +250,18 @@ def create_invoice(organization_id: int, payload: InvoiceInput, request: Request
     try:
         invoice = request.app.state.business_store.create_invoice(
             organization_id, payload.customer_id, payload.invoice_no, payload.total,
-            payload.issue_date, payload.due_date
+            payload.issue_date, payload.due_date,
+            payload.receivable_account_id, payload.revenue_account_id,
         )
     except KeyError as exc:
-        raise ApiError(ErrorCode.NOT_FOUND, "customer does not exist in this organization") from exc
+        message = (
+            "customer does not exist in this organization"
+            if exc.args and exc.args[0] == "customer"
+            else "ledger account does not exist in this organization"
+        )
+        raise ApiError(ErrorCode.NOT_FOUND, message) from exc
+    except ValueError as exc:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
     return _json(invoice)
 
 @router.get("/organizations/{organization_id}/invoices")
