@@ -23,6 +23,7 @@ def test_operational_api_covers_accounting_and_saas():
         headers = {"Authorization": f"Bearer {token}"}
 
         cash = accounting.add_account(org.id, "1100", "Cash", "asset")
+        receivable = accounting.add_account(org.id, "1200", "Accounts receivable", "asset")
         revenue = accounting.add_account(org.id, "4000", "Revenue", "revenue")
 
         created = client.post(
@@ -64,6 +65,8 @@ def test_operational_api_covers_accounting_and_saas():
                 "invoice_no": "INV-1",
                 "total": "100.00",
                 "issue_date": "2026-10-01",
+                "receivable_account_id": receivable.id,
+                "revenue_account_id": revenue.id,
             },
         )
         assert invoice.status_code == 201, invoice.text
@@ -72,7 +75,12 @@ def test_operational_api_covers_accounting_and_saas():
         payment = client.post(
             f"/api/v1/organizations/{org.id}/invoices/{invoice_id}/payments",
             headers=headers,
-            json={"amount": "100.00", "method": "bank"},
+            json={
+                "amount": "100.00",
+                "method": "bank",
+                "cash_account_id": cash.id,
+                "receivable_account_id": receivable.id,
+            },
         )
         assert payment.status_code == 201, payment.text
         assert payment.json()["invoice"]["status"] == "paid"
