@@ -82,6 +82,13 @@ def main() -> None:
                 ).fetchone()
             account_ids[code] = int(row[0])
 
+        conn.execute(
+            """INSERT INTO cash_accounts(organization_id,name,kind,account_id)
+               VALUES(%s,'E2E Cash','cash',%s)
+               ON CONFLICT (organization_id,name) DO UPDATE SET account_id=EXCLUDED.account_id""",
+            (org_id, account_ids["1000"]),
+        )
+
         existing = conn.execute(
             "SELECT id FROM journal_entries WHERE organization_id=%s AND document_no='STAGING-001'",
             (org_id,),
