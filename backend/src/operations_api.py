@@ -145,7 +145,10 @@ def remove_member(organization_id: int, member_user_id: int, request: Request,
             raise ApiError(ErrorCode.VALIDATION_ERROR, "cannot remove the last organization owner")
         if caller.role != "owner":
             raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can remove another owner")
-    memberships.remove_membership(member_user_id, organization_id)
+    try:
+        memberships.remove_membership(member_user_id, organization_id)
+    except ValueError as exc:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
     record(action=AuditAction.MEMBERSHIP_REMOVED, entity="membership",
            entity_id=f"{member_user_id}:{organization_id}", user_id=caller.user_id,
            organization_id=organization_id, metadata={"member_user_id": member_user_id})
