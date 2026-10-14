@@ -246,6 +246,11 @@ class BusinessStore:
             if invoice is None:
                 raise KeyError("invoice")
             if invoice["journal_entry_id"] is not None:
+                if (
+                    int(invoice["receivable_account_id"] or 0) != receivable_account_id
+                    or int(invoice["revenue_account_id"] or 0) != revenue_account_id
+                ):
+                    raise ValueError("invoice already has a journal entry with different ledger accounts")
                 return invoice
             if Decimal(invoice["paid"]) > 0:
                 raise ValueError(
