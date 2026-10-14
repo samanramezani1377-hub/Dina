@@ -121,6 +121,59 @@ def _mark_attempt(
     return dict(row)
 
 
+def _complete_verified_attempt(
+    request: Request,
+    payment_attempt_id: int,
+    organization_id: int,
+    authority: str,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Atomically mark a verified gateway payment and activate its subscription."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    with psycopg.connect(_db(request), row_factory=dict_row) as cn:
+        attempt = cn.execute(
+            """SELECT * FROM payment_attempts
+               WHERE id=%s AND organization_id=%s AND provider='zarinpal'
+               FOR UPDATE""",
+            (payment_attempt_id, organization_id),
+        ).fetchone()
+        if not attempt:
+            raise ApiError(ErrorCode.NOT_FOUND, "payment attempt not found")
+        if attempt["status"] == "succeeded":
+            return dict(attempt)
+        if attempt["status"] not in {"created", "pending"}:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "payment is no longer eligible for verification")
+        if attempt["provider_reference"] and attempt["provider_reference"] != authority:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "ZarinPal authority mismatch")
+
+        merged = dict(attempt["metadata"] or {})
+        merged.update(metadata)
+        updated = cn.execute(
+            """UPDATE payment_attempts
+               SET status='succeeded', provider_reference=%s, metadata=%s, updated_at=NOW()
+               WHERE id=%s AND organization_id=%s
+               RETURNING *""",
+            (authority, psycopg.types.json.Jsonb(merged), payment_attempt_id, organization_id),
+        ).fetchone()
+        subscription_id = attempt["subscription_id"]
+        if subscription_id is not None:
+            subscription = cn.execute(
+                """SELECT id FROM subscriptions
+                   WHERE id=%s AND organization_id=%s FOR UPDATE""",
+                (subscription_id, organization_id),
+            ).fetchone()
+            if not subscription:
+                raise ApiError(ErrorCode.VALIDATION_ERROR, "payment subscription no longer exists")
+            cn.execute(
+                """UPDATE subscriptions SET status='active'
+                   WHERE id=%s AND organization_id=%s""",
+                (subscription_id, organization_id),
+            )
+        return dict(updated)
+
+
 @router.post("/{organization_id}/payments/attempts", status_code=201)
 def create_payment_attempt(
     organization_id: int,
@@ -257,7 +310,7 @@ def zarinpal_callback(
 
     with psycopg.connect(_db(request), row_factory=dict_row) as cn:
         attempt = cn.execute(
-            """SELECT id,organization_id,amount,currency,status,provider_reference
+            """SELECT id,organization_id,amount,currency,status,provider_reference,subscription_id
                FROM payment_attempts
                WHERE id=%s AND organization_id=%s AND provider='zarinpal' FOR UPDATE""",
             (payment_attempt_id, organization_id),
@@ -269,22 +322,27 @@ def zarinpal_callback(
         if attempt["status"] == "succeeded":
             return {"status": "succeeded", "payment_attempt_id": payment_attempt_id, "already_verified": True}
         if Status != "OK":
-            cn.execute(
-                "UPDATE payment_attempts SET status='cancelled',updated_at=NOW() WHERE id=%s",
-                (payment_attempt_id,),
-            )
-            return {"status": "cancelled", "payment_attempt_id": payment_attempt_id}
+            if attempt["status"] in {"created", "pending"}:
+                cn.execute(
+                    """UPDATE payment_attempts SET status='cancelled',updated_at=NOW()
+                       WHERE id=%s AND organization_id=%s AND status IN ('created','pending')""",
+                    (payment_attempt_id, organization_id),
+                )
+                return {"status": "cancelled", "payment_attempt_id": payment_attempt_id}
+            return {"status": attempt["status"], "payment_attempt_id": payment_attempt_id}
+        if attempt["status"] not in {"created", "pending", "succeeded"}:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "payment is no longer eligible for verification")
         amount = Decimal(str(attempt["amount"]))
         currency = str(attempt["currency"])
         provider = ZarinPalProvider(request.app.state.settings)
 
     verified = provider.verify(Authority, amount, currency)
-    updated = _mark_attempt(
+    updated = _complete_verified_attempt(
         request,
         payment_attempt_id,
-        status="succeeded",
-        provider_reference=Authority,
-        metadata={"ref_id": verified.get("ref_id"), "verified_code": verified["code"]},
+        organization_id,
+        Authority,
+        {"ref_id": verified.get("ref_id"), "verified_code": verified["code"]},
     )
     return {
         "status": "succeeded",
