@@ -361,9 +361,20 @@ def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request:
         raise ApiError(ErrorCode.PERMISSION_DENIED, "invalid payment webhook signature")
     if payload.organization_id not in (None, organization_id):
         raise ApiError(ErrorCode.VALIDATION_ERROR, "organization mismatch")
+    provider_name = payload.provider.strip().lower()
+    if provider_name != "zarinpal":
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "unsupported payment webhook provider")
     allowed = {"created", "pending", "succeeded", "failed", "cancelled"}
     if payload.status is not None and payload.status not in allowed:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "invalid payment status")
+    # A shared application webhook secret authenticates the sender, but it is
+    # not a gateway receipt. Successful payments must pass the provider's
+    # amount-bound verification endpoint before they can activate a subscription.
+    if payload.status == "succeeded":
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "successful payments must be verified through the payment provider",
+        )
     import psycopg
     from psycopg.rows import dict_row
     with psycopg.connect(_db(request), row_factory=dict_row) as cn:
@@ -384,11 +395,13 @@ def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request:
             return {"accepted": True, "duplicate": True}
         if payload.payment_attempt_id is not None:
             attempt = cn.execute(
-                "SELECT id,status FROM payment_attempts WHERE id=%s AND organization_id=%s FOR UPDATE",
+                "SELECT id,status,provider FROM payment_attempts WHERE id=%s AND organization_id=%s FOR UPDATE",
                 (payload.payment_attempt_id, organization_id),
             ).fetchone()
             if not attempt:
                 raise ApiError(ErrorCode.NOT_FOUND, "payment attempt not found")
+            if attempt["provider"] != provider_name:
+                raise ApiError(ErrorCode.VALIDATION_ERROR, "payment provider does not match the attempt")
             if payload.status is not None:
                 transitions = {
                     "created": {"pending", "failed", "cancelled"},
@@ -403,7 +416,8 @@ def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request:
                 cn.execute(
                     """UPDATE payment_attempts SET status=%s,
                        provider_reference=COALESCE(%s,provider_reference),updated_at=NOW()
-                       WHERE id=%s""",
-                    (payload.status, payload.provider_reference, payload.payment_attempt_id),
+                       WHERE id=%s AND organization_id=%s AND provider=%s""",
+                    (payload.status, payload.provider_reference, payload.payment_attempt_id,
+                     organization_id, provider_name),
                 )
     return {"accepted": True, "duplicate": False, "event_id": payload.event_id}
