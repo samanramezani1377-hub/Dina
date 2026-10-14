@@ -376,7 +376,8 @@ def zarinpal_callback(
 
 @router.post("/{organization_id}/payments/webhook", status_code=202)
 def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request: Request):
-    from .platform_settings_api import read_setting_value\n    configured_secret = (read_setting_value("zarinpal_webhook_secret") or os.environ.get("PAYMENT_WEBHOOK_SECRET", "")).strip()
+    from .platform_settings_api import read_setting_value
+    configured_secret = (read_setting_value("zarinpal_webhook_secret") or os.environ.get("PAYMENT_WEBHOOK_SECRET", "")).strip()
     supplied_secret = request.headers.get("X-Payment-Webhook-Secret", "")
     if not configured_secret or not hmac.compare_digest(supplied_secret, configured_secret):
         raise ApiError(ErrorCode.PERMISSION_DENIED, "invalid payment webhook signature")
