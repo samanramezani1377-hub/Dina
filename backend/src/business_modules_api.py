@@ -134,7 +134,13 @@ def stock_transfer(organization_id:int,p:StockTransferIn,request:Request,c:Calle
     with connect(request) as cn:
         ok=cn.execute("SELECT EXISTS(SELECT 1 FROM warehouses WHERE id=%s AND organization_id=%s) AS source_ok, EXISTS(SELECT 1 FROM warehouses WHERE id=%s AND organization_id=%s) AS target_ok, EXISTS(SELECT 1 FROM products WHERE id=%s AND organization_id=%s) AS product_ok",(p.source_warehouse_id,organization_id,p.target_warehouse_id,organization_id,p.product_id,organization_id)).fetchone()
         if not ok["source_ok"] or not ok["target_ok"] or not ok["product_ok"]: raise ApiError(ErrorCode.NOT_FOUND,"warehouse or product not found")
-        cn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",(f"stock:{organization_id}:{p.product_id}",))
+        # Use the exact per-warehouse lock key shared by stock movements and
+        # sales posting. Lock both ends in a stable order to avoid deadlocks.
+        for warehouse_id in sorted({p.source_warehouse_id, p.target_warehouse_id}):
+            cn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"stock:{organization_id}:{warehouse_id}:{p.product_id}",),
+            )
         balance=cn.execute("SELECT COALESCE(SUM(quantity),0) AS quantity FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s",(organization_id,p.source_warehouse_id,p.product_id)).fetchone()["quantity"]
         if Decimal(balance)<p.quantity: raise ApiError(ErrorCode.VALIDATION_ERROR,"insufficient stock")
         avg=cn.execute("SELECT COALESCE(SUM(quantity*unit_cost) FILTER (WHERE quantity>0),0)/NULLIF(SUM(quantity) FILTER (WHERE quantity>0),0) AS cost FROM stock_movements WHERE organization_id=%s AND warehouse_id=%s AND product_id=%s",(organization_id,p.source_warehouse_id,p.product_id)).fetchone()["cost"]
