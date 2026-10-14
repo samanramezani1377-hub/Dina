@@ -526,6 +526,7 @@ class _InvoicesPageState extends State<InvoicesPage> {
   final date = TextEditingController(text: DateTime.now().toIso8601String().substring(0, 10));
   final receivableAccount = TextEditingController();
   final revenueAccount = TextEditingController();
+  final legacyInvoiceId = TextEditingController();
 
   Future<void> add() async {
     final customerId = int.tryParse(customer.text.trim());
@@ -559,6 +560,30 @@ class _InvoicesPageState extends State<InvoicesPage> {
     }
   }
 
+  Future<void> recoverLegacyInvoice() async {
+    final invoiceId = int.tryParse(legacyInvoiceId.text.trim());
+    final receivableId = int.tryParse(receivableAccount.text.trim());
+    final revenueId = int.tryParse(revenueAccount.text.trim());
+    if (invoiceId == null || receivableId == null || revenueId == null) {
+      showError(context, 'شناسه فاکتور قدیمی و شناسه دو حساب را وارد کنید.');
+      return;
+    }
+    try {
+      await AppScope.of(context).api.post(
+        pathFor(widget.org, 'invoices/$invoiceId/post'),
+        body: {
+          'receivable_account_id': receivableId,
+          'revenue_account_id': revenueId,
+        },
+      );
+      if (!mounted) return;
+      widget.onChanged();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('سند حسابداری فاکتور قدیمی ثبت شد.')));
+    } catch (error) {
+      if (mounted) showError(context, error);
+    }
+  }
+
   @override
   void dispose() {
     customer.dispose();
@@ -567,6 +592,7 @@ class _InvoicesPageState extends State<InvoicesPage> {
     date.dispose();
     receivableAccount.dispose();
     revenueAccount.dispose();
+    legacyInvoiceId.dispose();
     super.dispose();
   }
 
@@ -588,6 +614,14 @@ class _InvoicesPageState extends State<InvoicesPage> {
           SizedBox(width: 190, child: TextField(controller: revenueAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه حساب درآمد'))),
           FilledButton(onPressed: add, child: const Text('ثبت فاکتور و سند')),
         ]),
+        const Divider(height: 28),
+        const Text('بازیابی فاکتورهای قدیمی بدون سند حسابداری'),
+        const SizedBox(height: 8),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          SizedBox(width: 160, child: TextField(controller: legacyInvoiceId, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه فاکتور قدیمی'))),
+          FilledButton(onPressed: recoverLegacyInvoice, child: const Text('ثبت سند برای فاکتور قدیمی')),
+        ]),
+        const Text('فاکتورهایی که قبلاً پرداخت ثبت‌شده دارند، برای جلوگیری از دوباره‌شماری نیاز به تطبیق دستی دارند.'),
       ],
     ),
   );
