@@ -56,6 +56,41 @@ def main() -> None:
             headers=headers,
             json={"name": f"E2E Customer {int(time.time())}"},
         ), 201, "create customer")
+        legacy_invoice = check(client.post(
+            f"{BASE}/api/v1/organizations/{organization_id}/invoices",
+            headers=headers,
+            json={
+                "customer_id": int(customer["id"]),
+                "invoice_no": f"E2E-LEGACY-{int(time.time())}",
+                "total": "10.00",
+                "issue_date": issue_date,
+                "receivable_account_id": code_to_id["1200"],
+                "revenue_account_id": code_to_id["4000"],
+            },
+        ), 201, "create accounted legacy invoice")
+        cash_accounts = check(client.get(
+            f"{BASE}/api/v1/organizations/{organization_id}/cash-accounts",
+            headers=headers,
+        ), 200, "cash accounts")
+        cash_account = next(
+            (item for item in cash_accounts.get("items", []) if item.get("name") == "E2E Cash"),
+            None,
+        )
+        if cash_account is None:
+            raise AssertionError("staging seed did not create a ledger-linked cash account")
+        payment = check(client.post(
+            f"{BASE}/api/v1/organizations/{organization_id}/invoices/{int(legacy_invoice['id'])}/payments",
+            headers={**headers, "Idempotency-Key": f"E2E-PAY-{int(time.time())}"},
+            json={
+                "amount": "10.00",
+                "method": "cash",
+                "cash_account_id": int(cash_account["id"]),
+                "receivable_account_id": code_to_id["1200"],
+            },
+        ), 201, "pay accounted legacy invoice")
+        if payment["invoice"]["status"] != "paid" or payment["payment"].get("journal_entry_id") is None:
+            raise AssertionError("legacy invoice payment was not posted to the ledger")
+
         sale = check(client.post(
             f"{BASE}/api/v1/organizations/{organization_id}/sales",
             headers=headers,
@@ -93,13 +128,13 @@ def main() -> None:
             headers=headers,
             params={"date_from": issue_date, "date_to": issue_date},
         ), 200, "sales summary")
-        if int(sales_summary["documents"]) < 1 or Decimal(sales_summary["total"]) < Decimal("10"):
+        if int(sales_summary["documents"]) < 2 or Decimal(sales_summary["total"]) < Decimal("20"):
             raise AssertionError("sales summary did not include the posted E2E sale")
 
         ledger = check(client.get(f"{BASE}/api/v1/organizations/{organization_id}/ledger", headers=headers), 200, "ledger")
         if Decimal(ledger["period_debit_total"]) <= Decimal("0"):
             raise AssertionError("ledger: expected a positive debit total")
-        print("REAL E2E PASSED: health -> login -> organization -> journal -> post -> customer -> sale -> post -> trial balance -> sales report -> ledger")
+        print("REAL E2E PASSED: health -> login -> journal -> post -> accounted legacy invoice -> payment -> itemized sale -> post -> trial balance -> sales report -> ledger")
         print("user_id=", me["user_id"], "organization_id=", organization_id)
 
 if __name__ == "__main__":
