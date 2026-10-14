@@ -120,12 +120,18 @@ def add_member(organization_id: int, member_user_id: int, role: str, request: Re
                caller: Caller = Depends(manager_caller)):
     if role not in ROLES:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "invalid role")
-    # Only an existing owner may grant ownership; managers must not be able to
-    # elevate themselves or another account to the highest privilege.
+    memberships = request.app.state.memberships
+    target_role = memberships.user_role(member_user_id, organization_id)
+    # A manager must not be able to overwrite or demote an owner's membership.
+    if target_role == "owner" and caller.role != "owner":
+        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can modify another owner's membership")
+    # Only an existing owner may grant ownership.
     if role == "owner" and caller.role != "owner":
         raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can grant owner role")
+    if target_role == "owner" and role != "owner" and memberships.owner_count(organization_id) <= 1:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "cannot demote the last organization owner")
     try:
-        request.app.state.memberships.add_membership(member_user_id, organization_id, role)
+        memberships.add_membership(member_user_id, organization_id, role)
     except ValueError as exc:
         raise ApiError(ErrorCode.ORGANIZATION_NOT_FOUND, str(exc)) from exc
     record(action=AuditAction.MEMBERSHIP_ADDED, entity="membership",
