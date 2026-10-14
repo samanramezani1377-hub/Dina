@@ -203,11 +203,4 @@ def _correlation_id(request: Request | None) -> str | None:
 def _ip_address(request: Request | None) -> str | None:
     if request is None or not hasattr(request, "client") or request.client is None:
         return None
-    # The database column is PostgreSQL inet. Test clients, Unix-socket
-    # transports and malformed ASGI client values are not valid IP addresses;
-    # store NULL rather than letting diagnostics persistence fail repeatedly.
-    import ipaddress
-    try:
-        return str(ipaddress.ip_address(request.client.host))
-    except (TypeError, ValueError):
-        return None
+    return request.client.host
