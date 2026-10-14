@@ -20,6 +20,11 @@ def test_postgres_store_persists_and_enforces_tenant_scope():
         org2 = conn.execute(
             "INSERT INTO organizations(name) VALUES ('Dina test two') RETURNING id"
         ).fetchone()[0]
+        conn.execute(
+            """INSERT INTO fiscal_years(organization_id,name,starts_on,ends_on,status)
+               VALUES (%s,'FY2026','2026-01-01','2026-12-31','open')""",
+            (org1,),
+        )
 
     cash = store.add_account(org1, "1100", "Cash", "asset")
     revenue = store.add_account(org1, "4100", "Revenue", "revenue")
