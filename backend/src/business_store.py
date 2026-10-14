@@ -292,8 +292,8 @@ class BusinessStore:
         with self._connect() as conn:
             if idempotency_key:
                 conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s), %s)",
-                    (idempotency_key, org),
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, %s))",
+                    (f"{org}:{idempotency_key}", 0),
                 )
                 existing = conn.execute(
                     """SELECT payment_id FROM payment_idempotency
