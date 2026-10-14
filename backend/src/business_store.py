@@ -245,6 +245,8 @@ class BusinessStore:
             ).fetchone()
             if invoice is None:
                 raise KeyError("invoice")
+            if invoice["status"] not in {"draft", "open", "partial", "paid"}:
+                raise ValueError("void invoices cannot be posted to the ledger")
             if invoice["journal_entry_id"] is not None:
                 if (
                     int(invoice["receivable_account_id"] or 0) != receivable_account_id
