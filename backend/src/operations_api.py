@@ -272,9 +272,15 @@ def list_invoices(organization_id: int, request: Request,
 @router.post("/organizations/{organization_id}/invoices/{invoice_id}/payments", status_code=201)
 def pay_invoice(organization_id: int, invoice_id: int, payload: PaymentInput, request: Request,
                 caller: Caller = Depends(accounting_caller)):
+    idempotency_key = (request.headers.get("Idempotency-Key") or "").strip()
+    if not idempotency_key:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Idempotency-Key header is required for payments")
+    if len(idempotency_key) > 200:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Idempotency-Key must be at most 200 characters")
     try:
         payment, invoice = request.app.state.business_store.record_payment(
-            organization_id, invoice_id, payload.amount, payload.method, payload.reference, request.headers.get("Idempotency-Key"), payload.cash_account_id, payload.receivable_account_id
+            organization_id, invoice_id, payload.amount, payload.method, payload.reference,
+            idempotency_key, payload.cash_account_id, payload.receivable_account_id,
         )
     except KeyError as exc:
         raise ApiError(ErrorCode.NOT_FOUND, "invoice does not exist in this organization") from exc
