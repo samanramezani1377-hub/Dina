@@ -19,7 +19,7 @@ ALLOWED_KEYS={
  "android_key_password","android_store_password","windows_signing_certificate_b64",
  "windows_signing_password","e2e_base_url","e2e_token"
 }
-SECRET_KEYS=ALLOWED_KEYS-{ "zarinpal_callback_url","taxpayer_system_api_url","backup_storage_url","monitoring_dsn","e2e_base_url","android_key_alias"}
+SECRET_KEYS=ALLOWED_KEYS-{ "zarinpal_callback_url","taxpayer_system_api_url","backup_storage_url","monitoring_dsn","e2e_base_url","android_key_alias","zarinpal_sandbox"}
 
 class SettingIn(BaseModel):
  value:str=Field(max_length=10000)
