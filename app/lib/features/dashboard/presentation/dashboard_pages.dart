@@ -520,30 +520,79 @@ class InvoicesPage extends StatefulWidget {
   @override State<InvoicesPage> createState() => _InvoicesPageState();
 }
 class _InvoicesPageState extends State<InvoicesPage> {
-  final customer = TextEditingController(); final no = TextEditingController(); final total = TextEditingController();
+  final customer = TextEditingController();
+  final no = TextEditingController();
+  final total = TextEditingController();
   final date = TextEditingController(text: DateTime.now().toIso8601String().substring(0, 10));
+  final receivableAccount = TextEditingController();
+  final revenueAccount = TextEditingController();
+
   Future<void> add() async {
     final customerId = int.tryParse(customer.text.trim());
-    if (customerId == null) { showError(context, 'شناسه مشتری معتبر نیست.'); return; }
+    final receivableId = int.tryParse(receivableAccount.text.trim());
+    final revenueId = int.tryParse(revenueAccount.text.trim());
+    final amount = num.tryParse(total.text.trim());
+    if (customerId == null) {
+      showError(context, 'شناسه مشتری معتبر نیست.');
+      return;
+    }
+    if (receivableId == null || revenueId == null || amount == null || amount <= 0) {
+      showError(context, 'مبلغ و شناسه حساب دریافتنی و درآمد باید معتبر باشند.');
+      return;
+    }
     try {
-      await AppScope.of(context).api.post(pathFor(widget.org, 'invoices'), body: {
-        'customer_id': customerId, 'invoice_no': no.text.trim(), 'total': total.text.trim(), 'issue_date': date.text.trim(),
-      });
-      if (!mounted) return; widget.onChanged();
-    } catch (error) { if (mounted) showError(context, error); }
+      await AppScope.of(context).api.post(
+        pathFor(widget.org, 'invoices'),
+        body: {
+          'customer_id': customerId,
+          'invoice_no': no.text.trim(),
+          'total': total.text.trim(),
+          'issue_date': date.text.trim(),
+          'receivable_account_id': receivableId,
+          'revenue_account_id': revenueId,
+        },
+      );
+      if (!mounted) return;
+      widget.onChanged();
+    } catch (error) {
+      if (mounted) showError(context, error);
+    }
   }
-  @override void dispose() { customer.dispose(); no.dispose(); total.dispose(); date.dispose(); super.dispose(); }
-  @override Widget build(BuildContext context) => DataFrame(
-    title: 'فاکتورها', load: () => AppScope.of(context).api.get(pathFor(widget.org, 'invoices')),
-    create: Wrap(spacing: 10, runSpacing: 10, children: [
-      SizedBox(width: 130, child: TextField(controller: customer, decoration: const InputDecoration(labelText: 'شناسه مشتری'))),
-      SizedBox(width: 150, child: TextField(controller: no, decoration: const InputDecoration(labelText: 'شماره'))),
-      SizedBox(width: 150, child: TextField(controller: total, decoration: const InputDecoration(labelText: 'مبلغ'))),
-      SizedBox(width: 150, child: TextField(controller: date, decoration: const InputDecoration(labelText: 'تاریخ'))),
-      FilledButton(onPressed: add, child: const Text('ثبت')),
-    ]),
+
+  @override
+  void dispose() {
+    customer.dispose();
+    no.dispose();
+    total.dispose();
+    date.dispose();
+    receivableAccount.dispose();
+    revenueAccount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => DataFrame(
+    title: 'فاکتور ساده و ثبت حسابداری',
+    load: () => AppScope.of(context).api.get(pathFor(widget.org, 'invoices')),
+    create: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('با ثبت فاکتور، سند دریافتنی/درآمد به‌صورت هم‌زمان در دفتر کل ثبت می‌شود.'),
+        const SizedBox(height: 8),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          SizedBox(width: 130, child: TextField(controller: customer, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه مشتری'))),
+          SizedBox(width: 150, child: TextField(controller: no, decoration: const InputDecoration(labelText: 'شماره فاکتور'))),
+          SizedBox(width: 150, child: TextField(controller: total, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'مبلغ کل'))),
+          SizedBox(width: 150, child: TextField(controller: date, decoration: const InputDecoration(labelText: 'تاریخ صدور'))),
+          SizedBox(width: 190, child: TextField(controller: receivableAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه حساب دریافتنی'))),
+          SizedBox(width: 190, child: TextField(controller: revenueAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه حساب درآمد'))),
+          FilledButton(onPressed: add, child: const Text('ثبت فاکتور و سند')),
+        ]),
+      ],
+    ),
   );
 }
+
 
 class PaymentsPage extends StatefulWidget {
   const PaymentsPage({required this.org, required this.onChanged, super.key});
