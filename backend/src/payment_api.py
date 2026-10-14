@@ -71,7 +71,28 @@ def _json(value):
 def _provider(name: str, request: Request) -> PaymentProvider:
     normalized = name.strip().lower()
     if normalized == "zarinpal":
-        return ZarinPalProvider(request.app.state.settings)
+        from types import SimpleNamespace
+        from .platform_settings_api import read_setting_value
+
+        settings = request.app.state.settings
+        merchant_id = read_setting_value("zarinpal_merchant_id")
+        callback_url = read_setting_value("zarinpal_callback_url")
+        sandbox_value = read_setting_value("zarinpal_sandbox")
+        if sandbox_value is None:
+            sandbox = settings.zarinpal_sandbox
+        elif sandbox_value.strip().lower() in {"1", "true", "yes", "on"}:
+            sandbox = True
+        elif sandbox_value.strip().lower() in {"0", "false", "no", "off"}:
+            sandbox = False
+        else:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "invalid platform setting: zarinpal_sandbox")
+        effective_settings = SimpleNamespace(
+            zarinpal_merchant_id=merchant_id if merchant_id is not None else settings.zarinpal_merchant_id,
+            zarinpal_callback_url=callback_url if callback_url is not None else settings.zarinpal_callback_url,
+            zarinpal_sandbox=sandbox,
+            zarinpal_timeout_seconds=settings.zarinpal_timeout_seconds,
+        )
+        return ZarinPalProvider(effective_settings)
     raise ApiError(ErrorCode.VALIDATION_ERROR, f"unsupported payment provider: {name}")
 
 
@@ -355,7 +376,7 @@ def zarinpal_callback(
 
 @router.post("/{organization_id}/payments/webhook", status_code=202)
 def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request: Request):
-    configured_secret = os.environ.get("PAYMENT_WEBHOOK_SECRET", "").strip()
+    from .platform_settings_api import read_setting_value\n    configured_secret = (read_setting_value("zarinpal_webhook_secret") or os.environ.get("PAYMENT_WEBHOOK_SECRET", "")).strip()
     supplied_secret = request.headers.get("X-Payment-Webhook-Secret", "")
     if not configured_secret or not hmac.compare_digest(supplied_secret, configured_secret):
         raise ApiError(ErrorCode.PERMISSION_DENIED, "invalid payment webhook signature")
