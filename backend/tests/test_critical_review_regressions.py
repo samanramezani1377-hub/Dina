@@ -48,6 +48,14 @@ def test_financial_report_query_filters_entries_before_aggregating(monkeypatch):
 def test_financial_report_totals_exclude_drafts_and_future_entries():
     database_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
     with psycopg.connect(database_url) as connection:
+        # Some earlier persistence tests truncate rows without resetting the
+        # serial sequence. Bring it forward before creating an integration row.
+        connection.execute(
+            """SELECT setval(
+                 pg_get_serial_sequence('organizations','id'),
+                 GREATEST(COALESCE((SELECT MAX(id) FROM organizations),1),1)
+               )"""
+        )
         organization_id = connection.execute(
             "INSERT INTO organizations(name) VALUES (%s) RETURNING id",
             (f"report-regression-{uuid4()}",),
