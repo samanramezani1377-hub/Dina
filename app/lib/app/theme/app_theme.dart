@@ -18,7 +18,10 @@ abstract final class AppTheme {
     );
     return ThemeData(
       useMaterial3: false,
-      colorScheme: scheme,\n      scaffoldBackgroundColor: brightness == Brightness.light\n          ? const Color(0xFFFFFFFF)\n          : const Color(0xFF101713),
+      colorScheme: scheme,
+      scaffoldBackgroundColor: brightness == Brightness.light
+          ? const Color(0xFFFFFFFF)
+          : const Color(0xFF101713),
       fontFamily: 'Vazirmatn',
       visualDensity: VisualDensity.standard,
     );
