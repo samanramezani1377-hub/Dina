@@ -286,8 +286,27 @@ class PostgresStore:
         if original.status != POSTED:
             raise AccountingError(ErrorCode.JOURNAL_NOT_REVERSIBLE, "only a posted entry can be reversed")
         with self._connect() as conn:
+            locked_original = conn.execute(
+                """SELECT id,status FROM journal_entries
+                   WHERE id=%s AND organization_id=%s FOR UPDATE""",
+                (entry_id, organization_id),
+            ).fetchone()
+            if locked_original is None or locked_original["status"] != POSTED:
+                raise AccountingError(ErrorCode.JOURNAL_NOT_REVERSIBLE, "only a posted entry can be reversed")
+            fiscal_year = conn.execute(
+                """SELECT id FROM fiscal_years
+                   WHERE organization_id=%s AND status='open'
+                     AND starts_on<=%s AND ends_on>=%s
+                   FOR UPDATE""",
+                (organization_id, entry_date, entry_date),
+            ).fetchone()
+            if fiscal_year is None:
+                raise AccountingError(
+                    ErrorCode.VALIDATION_ERROR,
+                    "no open fiscal year covers this reversal date",
+                )
             existing = conn.execute(
-                "SELECT id FROM journal_entries WHERE organization_id=%s AND reversal_of_entry_id=%s",
+                "SELECT id FROM journal_entries WHERE organization_id=%s AND reversal_of_entry_id=%s FOR UPDATE",
                 (organization_id, entry_id),
             ).fetchone()
             if existing:
@@ -295,9 +314,10 @@ class PostgresStore:
             try:
                 row = conn.execute(
                     """INSERT INTO journal_entries
-                       (organization_id,document_no,description,status,posted_at,reversal_of_entry_id)
-                       VALUES (%s,%s,%s,'posted',NOW(),%s) RETURNING id""",
-                    (organization_id, document_no, description or f"reversal of {original.document_no}", entry_id),
+                       (organization_id,document_no,description,status,entry_date,posted_at,reversal_of_entry_id)
+                       VALUES (%s,%s,%s,'posted',%s,NOW(),%s) RETURNING id""",
+                    (organization_id, document_no, description or f"reversal of {original.document_no}",
+                     entry_date, entry_id),
                 ).fetchone()
                 new_id = int(row["id"])
                 for line in original.lines:
