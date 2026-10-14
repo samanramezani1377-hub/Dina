@@ -62,6 +62,13 @@ def test_only_managers_can_manage_members_and_managers_cannot_grant_owner():
         )
         assert forbidden_owner_grant.status_code == 403
 
+        forbidden_owner_demotion = client.post(
+            f"/api/v1/organizations/{owner.id}/members",
+            params={"member_user_id": 501, "role": "manager"},
+            headers=manager_headers,
+        )
+        assert forbidden_owner_demotion.status_code == 403
+
         forbidden_customer_write = client.post(
             f"/api/v1/organizations/{owner.id}/customers",
             headers=viewer_headers,
