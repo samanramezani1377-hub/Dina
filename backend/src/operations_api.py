@@ -133,7 +133,8 @@ def add_member(organization_id: int, member_user_id: int, role: str, request: Re
     try:
         memberships.add_membership(member_user_id, organization_id, role)
     except ValueError as exc:
-        raise ApiError(ErrorCode.ORGANIZATION_NOT_FOUND, str(exc)) from exc
+        code = ErrorCode.VALIDATION_ERROR if "last organization owner" in str(exc) else ErrorCode.ORGANIZATION_NOT_FOUND
+        raise ApiError(code, str(exc)) from exc
     record(action=AuditAction.MEMBERSHIP_ADDED, entity="membership",
            entity_id=f"{member_user_id}:{organization_id}", user_id=caller.user_id,
            organization_id=organization_id, metadata={"member_user_id": member_user_id, "role": role})
