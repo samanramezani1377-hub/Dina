@@ -142,6 +142,8 @@ class BusinessStore:
         if self._memory:
             if self.customer(org, customer_id) is None:
                 raise KeyError("customer")
+            if receivable_account_id == revenue_account_id:
+                raise ValueError("receivable and revenue accounts must be different")
             x = {
                 "id": self._ids["invoice"],
                 "organization_id": org,
@@ -160,6 +162,8 @@ class BusinessStore:
             self._invoices.append(x)
             return x
 
+        if receivable_account_id == revenue_account_id:
+            raise ValueError("receivable and revenue accounts must be different")
         with self._connect() as conn:
             customer = conn.execute(
                 "SELECT id FROM customers WHERE id=%s AND organization_id=%s FOR SHARE",
@@ -256,6 +260,8 @@ class BusinessStore:
                         or Decimal(existing["amount"]) != amount
                         or existing["method"] != method
                         or existing["reference"] != reference
+                        or existing["cash_account_id"] != cash_account_id
+                        or existing["receivable_account_id"] != receivable_account_id
                     ):
                         raise ValueError("Idempotency-Key was already used with different payment details")
                     existing_invoice = self.invoice(org, int(existing["invoice_id"]))
@@ -271,6 +277,8 @@ class BusinessStore:
                 "amount": amount,
                 "method": method,
                 "reference": reference,
+                "cash_account_id": cash_account_id,
+                "receivable_account_id": receivable_account_id,
                 "journal_entry_id": None,
             }
             self._ids["payment"] += 1
@@ -299,19 +307,26 @@ class BusinessStore:
                     ).fetchone()
                     if payment is None:
                         raise KeyError("payment")
+                    inv = conn.execute(
+                        "SELECT * FROM invoices WHERE id=%s AND organization_id=%s",
+                        (payment["invoice_id"], org),
+                    ).fetchone()
+                    cash_transaction = conn.execute(
+                        "SELECT cash_account_id FROM cash_transactions WHERE journal_entry_id=%s",
+                        (payment["journal_entry_id"],),
+                    ).fetchone() if payment["journal_entry_id"] is not None else None
+                    if inv is None:
+                        raise KeyError("invoice")
                     if (
                         int(payment["invoice_id"]) != invoice_id
                         or Decimal(payment["amount"]) != amount
                         or payment["method"] != method
                         or payment["reference"] != reference
+                        or int(inv["receivable_account_id"] or 0) != receivable_account_id
+                        or cash_transaction is None
+                        or int(cash_transaction["cash_account_id"]) != cash_account_id
                     ):
                         raise ValueError("Idempotency-Key was already used with different payment details")
-                    inv = conn.execute(
-                        "SELECT * FROM invoices WHERE id=%s AND organization_id=%s",
-                        (payment["invoice_id"], org),
-                    ).fetchone()
-                    if inv is None:
-                        raise KeyError("invoice")
                     return payment, inv
 
             inv = conn.execute(
