@@ -227,24 +227,52 @@ class BusinessStore:
     def invoice(self, org: int, invoice_id: int):
         if self._memory: return next((x for x in self._invoices if x["id"] == invoice_id and x["organization_id"] == org), None)
         with self._connect() as conn: return conn.execute("SELECT * FROM invoices WHERE id=%s AND organization_id=%s",(invoice_id,org)).fetchone()
-    def record_payment(self, org: int, invoice_id: int, amount: Decimal, method: str, reference: str | None,
-                       idempotency_key: str | None = None, cash_account_id: int | None = None,
-                       receivable_account_id: int | None = None):
-        """Record a customer payment atomically; optionally post cash/receivable accounting."""
+    def record_payment(
+        self,
+        org: int,
+        invoice_id: int,
+        amount: Decimal,
+        method: str,
+        reference: str | None,
+        idempotency_key: str | None = None,
+        cash_account_id: int | None = None,
+        receivable_account_id: int | None = None,
+    ):
+        """Record a payment and its cash/receivable journal atomically."""
+        if cash_account_id is None or receivable_account_id is None:
+            raise ValueError("cash_account_id and receivable_account_id are required for accounting")
         if self._memory:
             inv = self.invoice(org, invoice_id)
             if inv is None:
                 raise KeyError("invoice")
-            if amount <= 0 or amount > Decimal(inv["total"]) - Decimal(inv["paid"]):
-                raise ValueError("payment exceeds invoice balance")
+            if inv.get("receivable_account_id") != receivable_account_id:
+                raise ValueError("payment receivable account must match the invoice account")
             if idempotency_key:
                 existing_id = self._payment_keys.get((org, idempotency_key))
                 if existing_id is not None:
                     existing = next(p for p in self._payments if p["id"] == existing_id)
-                    return existing, inv
-            if (cash_account_id is None) != (receivable_account_id is None):
-                raise ValueError("cash_account_id and receivable_account_id must be provided together")
-            payment = {"id": self._ids["payment"], "organization_id": org, "invoice_id": invoice_id, "amount": amount, "method": method, "reference": reference}
+                    if (
+                        existing["invoice_id"] != invoice_id
+                        or Decimal(existing["amount"]) != amount
+                        or existing["method"] != method
+                        or existing["reference"] != reference
+                    ):
+                        raise ValueError("Idempotency-Key was already used with different payment details")
+                    existing_invoice = self.invoice(org, int(existing["invoice_id"]))
+                    if existing_invoice is None:
+                        raise KeyError("invoice")
+                    return existing, existing_invoice
+            if amount <= 0 or amount > Decimal(inv["total"]) - Decimal(inv["paid"]):
+                raise ValueError("payment exceeds invoice balance")
+            payment = {
+                "id": self._ids["payment"],
+                "organization_id": org,
+                "invoice_id": invoice_id,
+                "amount": amount,
+                "method": method,
+                "reference": reference,
+                "journal_entry_id": None,
+            }
             self._ids["payment"] += 1
             self._payments.append(payment)
             if idempotency_key:
@@ -255,81 +283,127 @@ class BusinessStore:
 
         with self._connect() as conn:
             if idempotency_key:
-                conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s), %s)", (idempotency_key, org))
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s), %s)",
+                    (idempotency_key, org),
+                )
                 existing = conn.execute(
-                    "SELECT payment_id FROM payment_idempotency WHERE organization_id=%s AND idempotency_key=%s FOR SHARE",
+                    """SELECT payment_id FROM payment_idempotency
+                       WHERE organization_id=%s AND idempotency_key=%s FOR SHARE""",
                     (org, idempotency_key),
                 ).fetchone()
                 if existing:
-                    payment = conn.execute("SELECT * FROM payments WHERE id=%s AND organization_id=%s", (existing["payment_id"], org)).fetchone()
-                    inv = conn.execute("SELECT * FROM invoices WHERE id=%s AND organization_id=%s", (invoice_id, org)).fetchone()
-                    if payment is None or inv is None:
+                    payment = conn.execute(
+                        "SELECT * FROM payments WHERE id=%s AND organization_id=%s",
+                        (existing["payment_id"], org),
+                    ).fetchone()
+                    if payment is None:
                         raise KeyError("payment")
+                    if (
+                        int(payment["invoice_id"]) != invoice_id
+                        or Decimal(payment["amount"]) != amount
+                        or payment["method"] != method
+                        or payment["reference"] != reference
+                    ):
+                        raise ValueError("Idempotency-Key was already used with different payment details")
+                    inv = conn.execute(
+                        "SELECT * FROM invoices WHERE id=%s AND organization_id=%s",
+                        (payment["invoice_id"], org),
+                    ).fetchone()
+                    if inv is None:
+                        raise KeyError("invoice")
                     return payment, inv
 
-            if (cash_account_id is None) != (receivable_account_id is None):
-                raise ValueError("cash_account_id and receivable_account_id must be provided together")
-            inv = conn.execute("SELECT * FROM invoices WHERE id=%s AND organization_id=%s FOR UPDATE", (invoice_id, org)).fetchone()
+            inv = conn.execute(
+                "SELECT * FROM invoices WHERE id=%s AND organization_id=%s FOR UPDATE",
+                (invoice_id, org),
+            ).fetchone()
             if inv is None:
                 raise KeyError("invoice")
+            if inv["journal_entry_id"] is None or inv["receivable_account_id"] is None:
+                raise ValueError("invoice must have a posted accounting entry before payment")
+            if int(inv["receivable_account_id"]) != receivable_account_id:
+                raise ValueError("payment receivable account must match the invoice account")
             remaining = Decimal(inv["total"]) - Decimal(inv["paid"])
             if amount <= 0 or amount > remaining:
                 raise ValueError("payment exceeds invoice balance")
 
-            journal_id = None
-            if cash_account_id is not None:
-                cash = conn.execute(
-                    "SELECT * FROM cash_accounts WHERE id=%s AND organization_id=%s FOR UPDATE",
-                    (cash_account_id, org),
-                ).fetchone()
-                if cash is None:
-                    raise KeyError("cash_account")
-                if cash["account_id"] is None:
-                    raise ValueError("cash account is not linked to a chart-of-accounts account")
-                accounts = conn.execute(
-                    "SELECT id FROM accounts WHERE id IN (%s,%s) AND organization_id=%s",
-                    (cash["account_id"], receivable_account_id, org),
-                ).fetchall()
-                if len(accounts) != 2:
-                    raise KeyError("account")
-                lines = [JournalLine(int(cash["account_id"]), amount, Decimal("0")),
-                         JournalLine(receivable_account_id, Decimal("0"), amount)]
-                validate_journal(lines)
-                j = conn.execute(
-                    """INSERT INTO journal_entries
-                       (organization_id,document_no,description,status,entry_date,posted_at)
-                       VALUES (%s,%s,%s,'posted',CURRENT_DATE,NOW()) RETURNING id""",
-                    (org, f"PAY-{invoice_id}-{uuid.uuid4().hex[:12]}", f"Payment for invoice {inv['invoice_no']}")
-                ).fetchone()
-                journal_id = int(j["id"])
-                for line in lines:
-                    conn.execute(
-                        "INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES(%s,%s,%s,%s)",
-                        (journal_id, line.account_id, line.debit, line.credit),
-                    )
+            cash = conn.execute(
+                "SELECT * FROM cash_accounts WHERE id=%s AND organization_id=%s FOR UPDATE",
+                (cash_account_id, org),
+            ).fetchone()
+            if cash is None:
+                raise KeyError("cash_account")
+            if cash["account_id"] is None:
+                raise ValueError("cash account is not linked to a chart-of-accounts account")
+            accounts = conn.execute(
+                """SELECT id,account_type FROM accounts
+                   WHERE id IN (%s,%s) AND organization_id=%s""",
+                (cash["account_id"], receivable_account_id, org),
+            ).fetchall()
+            by_id = {int(row["id"]): row for row in accounts}
+            if len(by_id) != 2:
+                raise KeyError("account")
+            if by_id[int(cash["account_id"])]["account_type"] != "asset":
+                raise ValueError("cash account must link to an asset account")
+            if by_id[receivable_account_id]["account_type"] != "asset":
+                raise ValueError("receivable account must be an asset account")
+
+            fiscal_year = conn.execute(
+                """SELECT id FROM fiscal_years
+                   WHERE organization_id=%s AND status='open'
+                     AND starts_on<=CURRENT_DATE AND ends_on>=CURRENT_DATE
+                   FOR UPDATE""",
+                (org,),
+            ).fetchone()
+            if fiscal_year is None:
+                raise ValueError("no open fiscal year covers this payment date")
+
+            lines = [
+                JournalLine(int(cash["account_id"]), amount, Decimal("0")),
+                JournalLine(receivable_account_id, Decimal("0"), amount),
+            ]
+            validate_journal(lines)
+            journal = conn.execute(
+                """INSERT INTO journal_entries
+                   (organization_id,document_no,description,status,entry_date,posted_at)
+                   VALUES (%s,%s,%s,'posted',CURRENT_DATE,NOW()) RETURNING id""",
+                (org, f"PAY-{invoice_id}-{uuid.uuid4().hex[:12]}", f"Payment for invoice {inv['invoice_no']}"),
+            ).fetchone()
+            journal_id = int(journal["id"])
+            for line in lines:
+                conn.execute(
+                    """INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit)
+                       VALUES(%s,%s,%s,%s)""",
+                    (journal_id, line.account_id, line.debit, line.credit),
+                )
 
             payment = conn.execute(
-                "INSERT INTO payments(organization_id,invoice_id,amount,method,reference,journal_entry_id) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
+                """INSERT INTO payments
+                   (organization_id,invoice_id,amount,method,reference,journal_entry_id)
+                   VALUES(%s,%s,%s,%s,%s,%s) RETURNING *""",
                 (org, invoice_id, amount, method, reference, journal_id),
             ).fetchone()
             if idempotency_key:
                 conn.execute(
-                    "INSERT INTO payment_idempotency(organization_id,idempotency_key,payment_id) VALUES(%s,%s,%s)",
+                    """INSERT INTO payment_idempotency(organization_id,idempotency_key,payment_id)
+                       VALUES(%s,%s,%s)""",
                     (org, idempotency_key, payment["id"]),
                 )
             paid = Decimal(inv["paid"]) + amount
             status = "paid" if paid == Decimal(inv["total"]) else "partial"
             updated = conn.execute(
-                "UPDATE invoices SET paid=%s,status=%s WHERE id=%s AND organization_id=%s RETURNING *",
+                """UPDATE invoices SET paid=%s,status=%s
+                   WHERE id=%s AND organization_id=%s RETURNING *""",
                 (paid, status, invoice_id, org),
             ).fetchone()
-            if cash_account_id is not None:
-                conn.execute(
-                    """INSERT INTO cash_transactions
-                       (organization_id,cash_account_id,amount,direction,description,reference,transaction_date,journal_entry_id)
-                       VALUES(%s,%s,%s,'in',%s,%s,CURRENT_DATE,%s)""",
-                    (org, cash_account_id, amount, f"Payment for invoice {inv['invoice_no']}", reference, journal_id),
-                )
+            conn.execute(
+                """INSERT INTO cash_transactions
+                   (organization_id,cash_account_id,amount,direction,description,reference,
+                    transaction_date,journal_entry_id)
+                   VALUES(%s,%s,%s,'in',%s,%s,CURRENT_DATE,%s)""",
+                (org, cash_account_id, amount, f"Payment for invoice {inv['invoice_no']}", reference, journal_id),
+            )
             return payment, updated
 
     def subscription(self, org: int):
