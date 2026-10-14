@@ -71,8 +71,25 @@ def close_year(organization_id:int,year_id:int,request:Request,c:Caller=Depends(
         year=cn.execute("SELECT * FROM fiscal_years WHERE id=%s AND organization_id=%s FOR UPDATE",(year_id,organization_id)).fetchone()
         if not year: raise ApiError(ErrorCode.NOT_FOUND,"fiscal year not found")
         if year["status"]!="open": raise ApiError(ErrorCode.VALIDATION_ERROR,"fiscal year is already closed")
-        pending=cn.execute("SELECT 1 FROM sales WHERE organization_id=%s AND issue_date BETWEEN %s AND %s AND status='draft' UNION ALL SELECT 1 FROM purchases WHERE organization_id=%s AND issue_date BETWEEN %s AND %s AND status='draft' LIMIT 1",(organization_id,year["starts_on"],year["ends_on"],organization_id,year["starts_on"],year["ends_on"])).fetchone()
-        if pending: raise ApiError(ErrorCode.VALIDATION_ERROR,"draft sales or purchases exist in this fiscal year")
+        pending=cn.execute(
+            """SELECT 1 FROM sales
+                 WHERE organization_id=%s AND issue_date BETWEEN %s AND %s AND status='draft'
+               UNION ALL
+               SELECT 1 FROM purchases
+                 WHERE organization_id=%s AND issue_date BETWEEN %s AND %s AND status='draft'
+               UNION ALL
+               SELECT 1 FROM journal_entries
+                 WHERE organization_id=%s AND entry_date BETWEEN %s AND %s AND status='draft'
+               LIMIT 1""",
+            (organization_id,year["starts_on"],year["ends_on"],
+             organization_id,year["starts_on"],year["ends_on"],
+             organization_id,year["starts_on"],year["ends_on"]),
+        ).fetchone()
+        if pending:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "draft sales, purchases or journal entries exist in this fiscal year",
+            )
         r=cn.execute("UPDATE fiscal_years SET status='closed' WHERE id=%s AND organization_id=%s RETURNING *",(year_id,organization_id)).fetchone()
     return _j(dict(r))
 
