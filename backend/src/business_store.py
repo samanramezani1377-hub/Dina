@@ -70,10 +70,27 @@ class TenantStore:
             )
     def remove_membership(self, user_id: int, organization_id: int) -> None:
         if self._memory:
+            role = self._memberships.get((user_id, organization_id))
+            if role == "owner" and self.owner_count(organization_id) <= 1:
+                raise ValueError("cannot remove the last organization owner")
             self._memberships.pop((user_id, organization_id), None)
             return
+        # Lock all membership rows for this organization so two concurrent
+        # removals cannot both observe two owners and remove both.
         with self._connect() as conn:
-            conn.execute("DELETE FROM memberships WHERE user_id=%s AND organization_id=%s", (user_id, organization_id))
+            rows = conn.execute(
+                "SELECT user_id, role FROM memberships WHERE organization_id=%s FOR UPDATE",
+                (organization_id,),
+            ).fetchall()
+            target = next((row for row in rows if int(row["user_id"]) == user_id), None)
+            if target is None:
+                return
+            if target["role"] == "owner" and sum(row["role"] == "owner" for row in rows) <= 1:
+                raise ValueError("cannot remove the last organization owner")
+            conn.execute(
+                "DELETE FROM memberships WHERE user_id=%s AND organization_id=%s",
+                (user_id, organization_id),
+            )
 
 class BusinessStore:
     def __init__(self, database_url: str | None = None):
