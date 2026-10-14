@@ -60,9 +60,20 @@ class TenantStore:
         if self._memory:
             if organization_id not in self._orgs:
                 raise ValueError("organization does not exist")
+            previous_role = self._memberships.get((user_id, organization_id))
+            if previous_role == "owner" and role != "owner" and self.owner_count(organization_id) <= 1:
+                raise ValueError("cannot demote the last organization owner")
             self._memberships[(user_id, organization_id)] = role
             return
         with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id, role FROM memberships WHERE organization_id=%s FOR UPDATE",
+                (organization_id,),
+            ).fetchall()
+            previous = next((row for row in rows if int(row["user_id"]) == user_id), None)
+            owner_count = sum(row["role"] == "owner" for row in rows)
+            if previous and previous["role"] == "owner" and role != "owner" and owner_count <= 1:
+                raise ValueError("cannot demote the last organization owner")
             conn.execute(
                 "INSERT INTO memberships(user_id,organization_id,role) VALUES(%s,%s,%s) "
                 "ON CONFLICT (user_id,organization_id) DO UPDATE SET role=EXCLUDED.role",
