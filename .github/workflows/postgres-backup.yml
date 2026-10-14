@@ -1,0 +1,72 @@
+name: Dina PostgreSQL backup
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dina-postgres-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Create, verify and upload encrypted PostgreSQL backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.BACKUP_AWS_REGION }}
+    steps:
+      - name: Validate backup configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in BACKUP_DATABASE_URL BACKUP_S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Required repository secret/variable is not configured: $name"
+              exit 1
+            fi
+          done
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Create and verify backup
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/dina-backup"
+          backup="$RUNNER_TEMP/dina-backup/dina-$(date -u +%Y%m%dT%H%M%SZ).dump"
+          pg_dump --format=custom --no-owner --no-acl "$BACKUP_DATABASE_URL" --file "$backup"
+          test -s "$backup"
+          pg_restore --list "$backup" > "$RUNNER_TEMP/dina-backup/contents.txt"
+          test -s "$RUNNER_TEMP/dina-backup/contents.txt"
+          echo "BACKUP_FILE=$backup" >> "$GITHUB_ENV"
+          echo "BACKUP_NAME=$(basename "$backup")" >> "$GITHUB_ENV"
+          sha256sum "$backup" | tee "$RUNNER_TEMP/dina-backup/sha256.txt"
+
+      - name: Upload with server-side encryption
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws s3 cp "$BACKUP_FILE" "s3://$BACKUP_S3_BUCKET/dina/postgresql/$BACKUP_NAME" \
+            --region "$AWS_REGION" --sse AES256 --only-show-errors
+          aws s3 cp "$RUNNER_TEMP/dina-backup/sha256.txt" \
+            "s3://$BACKUP_S3_BUCKET/dina/postgresql/$BACKUP_NAME.sha256" \
+            --region "$AWS_REGION" --sse AES256 --only-show-errors
+
+      - name: Report backup metadata
+        shell: bash
+        run: |
+          echo "Verified PostgreSQL custom-format backup uploaded: $BACKUP_NAME"
+          echo "Configure an S3 lifecycle policy on dina/postgresql/ to enforce retention."
