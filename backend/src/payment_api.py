@@ -134,46 +134,56 @@ def create_payment_attempt(
     provider_name = payload.provider.strip().lower()
     import psycopg
     from psycopg.rows import dict_row
+    if provider_name != "zarinpal":
+        raise ApiError(ErrorCode.VALIDATION_ERROR, f"unsupported payment provider: {provider_name}")
+
+    currency = payload.currency.strip().upper()
     with psycopg.connect(_db(request), row_factory=dict_row) as cn:
-        existing = cn.execute(
-            """SELECT * FROM payment_attempts
-               WHERE organization_id=%s AND provider=%s AND idempotency_key=%s""",
-            (organization_id, provider_name, key),
-        ).fetchone()
-        if existing:
-            return _json(dict(existing))
         if payload.subscription_id is not None:
             subscription = cn.execute(
-                "SELECT id FROM subscriptions WHERE id=%s AND organization_id=%s",
+                "SELECT id FROM subscriptions WHERE id=%s AND organization_id=%s FOR UPDATE",
                 (payload.subscription_id, organization_id),
             ).fetchone()
             if not subscription:
                 raise ApiError(ErrorCode.NOT_FOUND, "subscription not found")
-        try:
-            row = cn.execute(
-                """INSERT INTO payment_attempts
-                (organization_id,provider,idempotency_key,amount,currency,subscription_id,metadata)
-                VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-                (
-                    organization_id,
-                    provider_name,
-                    key,
-                    payload.amount,
-                    payload.currency.upper(),
-                    payload.subscription_id,
-                    psycopg.types.json.Jsonb(payload.metadata),
-                ),
-            ).fetchone()
-        except psycopg.errors.UniqueViolation:
+        row = cn.execute(
+            """INSERT INTO payment_attempts
+               (organization_id,provider,idempotency_key,amount,currency,subscription_id,metadata)
+               VALUES(%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (organization_id,provider,idempotency_key) DO NOTHING
+               RETURNING *""",
+            (
+                organization_id, provider_name, key, payload.amount, currency,
+                payload.subscription_id, psycopg.types.json.Jsonb(payload.metadata),
+            ),
+        ).fetchone()
+        created_now = row is not None
+        if row is None:
             row = cn.execute(
                 """SELECT * FROM payment_attempts
-                   WHERE organization_id=%s AND provider=%s AND idempotency_key=%s""",
+                   WHERE organization_id=%s AND provider=%s AND idempotency_key=%s
+                   FOR UPDATE""",
                 (organization_id, provider_name, key),
             ).fetchone()
+            if row is None:
+                raise ApiError(ErrorCode.VALIDATION_ERROR, "payment idempotency conflict; retry the request")
+            same_request = (
+                Decimal(str(row["amount"])) == payload.amount
+                and str(row["currency"]).upper() == currency
+                and row["subscription_id"] == payload.subscription_id
+            )
+            if not same_request:
+                raise ApiError(
+                    ErrorCode.VALIDATION_ERROR,
+                    "Idempotency-Key was already used with different payment details",
+                    {"payment_attempt_id": row["id"]},
+                )
+            # A replay must never create a second gateway payment. Return the
+            # original result (including its original payment URL when present).
+            existing = dict(row)
+            payment_url = (existing.get("metadata") or {}).get("payment_url")
+            return _json({**existing, **({"payment_url": payment_url} if payment_url else {})})
         attempt = dict(row)
-
-    if provider_name != "zarinpal":
-        raise ApiError(ErrorCode.VALIDATION_ERROR, f"unsupported payment provider: {provider_name}")
 
     try:
         provider = _provider(provider_name, request)
