@@ -111,6 +111,112 @@ def test_financial_report_totals_exclude_drafts_and_future_entries():
 
 
 @pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="requires PostgreSQL")
+def test_legacy_invoice_and_payment_post_balanced_journals_atomically():
+    database_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+    suffix = str(uuid4())
+    today = date.today()
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            """SELECT setval(
+                 pg_get_serial_sequence('organizations','id'),
+                 GREATEST(COALESCE((SELECT MAX(id) FROM organizations),1),1)
+               )"""
+        )
+        organization_id = connection.execute(
+            "INSERT INTO organizations(name) VALUES (%s) RETURNING id",
+            (f"legacy-invoice-regression-{suffix}",),
+        ).fetchone()[0]
+        customer_id = connection.execute(
+            "INSERT INTO customers(organization_id,name) VALUES (%s,%s) RETURNING id",
+            (organization_id, f"Customer {suffix}"),
+        ).fetchone()[0]
+        receivable_id = connection.execute(
+            """INSERT INTO accounts(organization_id,code,name,account_type)
+               VALUES (%s,%s,'Receivable test','asset') RETURNING id""",
+            (organization_id, f"AR-{suffix[:8]}"),
+        ).fetchone()[0]
+        revenue_id = connection.execute(
+            """INSERT INTO accounts(organization_id,code,name,account_type)
+               VALUES (%s,%s,'Revenue test','revenue') RETURNING id""",
+            (organization_id, f"REV-{suffix[:8]}"),
+        ).fetchone()[0]
+        cash_id = connection.execute(
+            """INSERT INTO accounts(organization_id,code,name,account_type)
+               VALUES (%s,%s,'Cash test','asset') RETURNING id""",
+            (organization_id, f"CASH-{suffix[:8]}"),
+        ).fetchone()[0]
+        cash_account_id = connection.execute(
+            """INSERT INTO cash_accounts(organization_id,name,kind,account_id)
+               VALUES (%s,%s,'cash',%s) RETURNING id""",
+            (organization_id, f"Cash {suffix}", cash_id),
+        ).fetchone()[0]
+        connection.execute(
+            """INSERT INTO fiscal_years(organization_id,name,starts_on,ends_on,status)
+               VALUES (%s,%s,%s,%s,'open')""",
+            (organization_id, f"FY-{suffix}", date(today.year, 1, 1), date(today.year, 12, 31)),
+        )
+
+    store = BusinessStore(database_url)
+    invoice = store.create_invoice(
+        organization_id, customer_id, f"INV-{suffix}", Decimal("100"),
+        today, None, receivable_id, revenue_id,
+    )
+    try:
+        assert invoice["journal_entry_id"] is not None
+        with psycopg.connect(database_url) as connection:
+            original_totals = connection.execute(
+                """SELECT SUM(debit),SUM(credit) FROM journal_lines
+                   WHERE journal_entry_id=%s""",
+                (invoice["journal_entry_id"],),
+            ).fetchone()
+            assert original_totals == (Decimal("100.0000"), Decimal("100.0000"))
+
+        payment, paid_invoice = store.record_payment(
+            organization_id, int(invoice["id"]), Decimal("25"), "cash", f"ref-{suffix}",
+            f"payment-{suffix}", cash_account_id, receivable_id,
+        )
+        assert payment["journal_entry_id"] is not None
+        assert paid_invoice["status"] == "partial"
+        replay, replay_invoice = store.record_payment(
+            organization_id, int(invoice["id"]), Decimal("25"), "cash", f"ref-{suffix}",
+            f"payment-{suffix}", cash_account_id, receivable_id,
+        )
+        assert replay["id"] == payment["id"]
+        assert replay_invoice["paid"] == Decimal("25")
+        with psycopg.connect(database_url) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM payments WHERE organization_id=%s",
+                (organization_id,),
+            ).fetchone()[0] == 1
+            assert connection.execute(
+                "SELECT COUNT(*) FROM cash_transactions WHERE organization_id=%s",
+                (organization_id,),
+            ).fetchone()[0] == 1
+        with pytest.raises(ValueError, match="Idempotency-Key"):
+            store.record_payment(
+                organization_id, int(invoice["id"]), Decimal("30"), "cash", f"ref-{suffix}",
+                f"payment-{suffix}", cash_account_id, receivable_id,
+            )
+    finally:
+        with psycopg.connect(database_url) as connection:
+            connection.execute("DELETE FROM payment_idempotency WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM cash_transactions WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM payments WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM invoices WHERE organization_id=%s", (organization_id,))
+            connection.execute(
+                """DELETE FROM journal_lines WHERE journal_entry_id IN
+                   (SELECT id FROM journal_entries WHERE organization_id=%s)""",
+                (organization_id,),
+            )
+            connection.execute("DELETE FROM journal_entries WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM cash_accounts WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM customers WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM accounts WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM fiscal_years WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM organizations WHERE id=%s", (organization_id,))
+
+
+@pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="requires PostgreSQL")
 def test_verified_payment_renews_subscription_once():
     database_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
     suffix = str(uuid4())
