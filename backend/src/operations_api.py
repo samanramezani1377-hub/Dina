@@ -88,6 +88,9 @@ class InvoiceInput(BaseModel):
     due_date: date | None = None
     receivable_account_id: int
     revenue_account_id: int
+class LegacyInvoicePostingInput(BaseModel):
+    receivable_account_id: int
+    revenue_account_id: int
 class PaymentInput(BaseModel):
     amount: Decimal = Field(gt=0)
     method: str = Field(default="other", max_length=50)
@@ -268,6 +271,41 @@ def create_invoice(organization_id: int, payload: InvoiceInput, request: Request
 def list_invoices(organization_id: int, request: Request,
                   caller: Caller = Depends(member_caller)):
     return {"items": _json(request.app.state.business_store.list_invoices(organization_id))}
+
+@router.post("/organizations/{organization_id}/invoices/{invoice_id}/post")
+def post_legacy_invoice(
+    organization_id: int,
+    invoice_id: int,
+    payload: LegacyInvoicePostingInput,
+    request: Request,
+    caller: Caller = Depends(accounting_caller),
+):
+    try:
+        invoice = request.app.state.business_store.post_legacy_invoice(
+            organization_id,
+            invoice_id,
+            payload.receivable_account_id,
+            payload.revenue_account_id,
+        )
+    except KeyError as exc:
+        message = (
+            "invoice does not exist in this organization"
+            if exc.args and exc.args[0] == "invoice"
+            else "ledger account does not exist in this organization"
+        )
+        raise ApiError(ErrorCode.NOT_FOUND, message) from exc
+    except ValueError as exc:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+    record(
+        action=AuditAction.JOURNAL_POSTED,
+        entity="invoice",
+        entity_id=invoice_id,
+        user_id=caller.user_id,
+        organization_id=organization_id,
+        metadata={"journal_entry_id": invoice["journal_entry_id"], "legacy_recovery": True},
+    )
+    return _json(invoice)
+
 
 @router.post("/organizations/{organization_id}/invoices/{invoice_id}/payments", status_code=201)
 def pay_invoice(organization_id: int, invoice_id: int, payload: PaymentInput, request: Request,
