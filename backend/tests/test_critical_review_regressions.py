@@ -155,6 +155,13 @@ def test_legacy_invoice_and_payment_post_balanced_journals_atomically():
                VALUES (%s,%s,%s,%s,'open')""",
             (organization_id, f"FY-{suffix}", date(today.year, 1, 1), date(today.year, 12, 31)),
         )
+        legacy_invoice_id = connection.execute(
+            """INSERT INTO invoices
+               (organization_id,customer_id,invoice_no,issue_date,total,
+                receivable_account_id,revenue_account_id)
+               VALUES(%s,%s,%s,%s,40,%s,%s) RETURNING id""",
+            (organization_id, customer_id, f"OLD-{suffix}", today, receivable_id, revenue_id),
+        ).fetchone()[0]
 
     store = BusinessStore(database_url)
     invoice = store.create_invoice(
@@ -162,6 +169,15 @@ def test_legacy_invoice_and_payment_post_balanced_journals_atomically():
         today, None, receivable_id, revenue_id,
     )
     try:
+        recovered = store.post_legacy_invoice(
+            organization_id, legacy_invoice_id, receivable_id, revenue_id,
+        )
+        assert recovered["journal_entry_id"] is not None
+        recovered_again = store.post_legacy_invoice(
+            organization_id, legacy_invoice_id, receivable_id, revenue_id,
+        )
+        assert recovered_again["journal_entry_id"] == recovered["journal_entry_id"]
+
         assert invoice["journal_entry_id"] is not None
         with psycopg.connect(database_url) as connection:
             original_totals = connection.execute(
