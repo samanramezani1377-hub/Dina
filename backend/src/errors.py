@@ -253,9 +253,18 @@ def _log_error(request: Request, code: str, message: str, http_status: int, deta
             pass
         settings = getattr(request.app.state, "settings", None)
         if settings is not None and getattr(settings, "database_url", None):
+            client_ip = None
+            if request.client is not None:
+                # error_logs.ip_address is PostgreSQL inet; ASGI test clients
+                # and malformed proxy values must not break best-effort logging.
+                import ipaddress
+                try:
+                    client_ip = str(ipaddress.ip_address(request.client.host))
+                except (TypeError, ValueError):
+                    client_ip = None
             record_error(settings.database_url, correlation_id=rid, code=code, message=message,
                          http_status=http_status, method=request.method, path=request.url.path,
-                         organization_id=org_id, ip_address=request.client.host if request.client else None,
+                         organization_id=org_id, ip_address=client_ip,
                          user_agent=request.headers.get("user-agent"), details=details, exception=exc, level=level)
     except Exception:
         logger.exception("error-center logging failed")
