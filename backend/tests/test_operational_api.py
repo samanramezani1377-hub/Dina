@@ -74,7 +74,7 @@ def test_operational_api_covers_accounting_and_saas():
 
         payment = client.post(
             f"/api/v1/organizations/{org.id}/invoices/{invoice_id}/payments",
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "operational-api-payment-1"},
             json={
                 "amount": "100.00",
                 "method": "bank",
