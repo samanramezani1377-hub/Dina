@@ -12,6 +12,7 @@ from src.auth import issue_access_token
 from src.business_store import BusinessStore, TenantStore
 from src.financial_reports_api import _account_totals
 from src.main import app
+from src.payment_api import _complete_verified_attempt
 
 
 def test_financial_report_query_filters_entries_before_aggregating(monkeypatch):
@@ -106,6 +107,86 @@ def test_financial_report_totals_exclude_drafts_and_future_entries():
             )
             connection.execute("DELETE FROM journal_entries WHERE organization_id=%s", (organization_id,))
             connection.execute("DELETE FROM accounts WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM organizations WHERE id=%s", (organization_id,))
+
+
+@pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="requires PostgreSQL")
+def test_verified_payment_renews_subscription_once():
+    database_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+    suffix = str(uuid4())
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            """SELECT setval(
+                 pg_get_serial_sequence('organizations','id'),
+                 GREATEST(COALESCE((SELECT MAX(id) FROM organizations),1),1)
+               )"""
+        )
+        organization_id = connection.execute(
+            "INSERT INTO organizations(name) VALUES (%s) RETURNING id",
+            (f"payment-regression-{suffix}",),
+        ).fetchone()[0]
+        plan_code = f"payment-test-{suffix}"
+        connection.execute(
+            """INSERT INTO plans(code,name,price,currency,billing_period)
+               VALUES (%s,'Payment regression',100,'IRR','month')""",
+            (plan_code,),
+        )
+        subscription_id = connection.execute(
+            """INSERT INTO subscriptions
+               (organization_id,plan,status,starts_at,ends_at)
+               VALUES (%s,%s,'expired',NOW()-INTERVAL '2 months',NOW()-INTERVAL '1 day')
+               RETURNING id""",
+            (organization_id, plan_code),
+        ).fetchone()[0]
+        authority = f"authority-{suffix}"
+        attempt_id = connection.execute(
+            """INSERT INTO payment_attempts
+               (organization_id,provider,idempotency_key,provider_reference,amount,currency,status,subscription_id,metadata)
+               VALUES (%s,'zarinpal',%s,%s,100,'IRR','pending',%s,'{}'::jsonb)
+               RETURNING id""",
+            (organization_id, f"idem-{suffix}", authority, subscription_id),
+        ).fetchone()[0]
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(settings=SimpleNamespace(database_url=database_url))
+        )
+    )
+    try:
+        first = _complete_verified_attempt(
+            request, attempt_id, organization_id, authority,
+            {"ref_id": f"ref-{suffix}", "verified_code": 100},
+        )
+        assert first["status"] == "succeeded"
+        with psycopg.connect(database_url) as connection:
+            subscription = connection.execute(
+                "SELECT status,ends_at FROM subscriptions WHERE id=%s",
+                (subscription_id,),
+            ).fetchone()
+            assert subscription["status"] == "active"
+            assert subscription["ends_at"] is not None
+            assert subscription["ends_at"].date() > date.today()
+            assert connection.execute(
+                "SELECT COUNT(*) FROM subscription_history WHERE subscription_id=%s AND action='payment_verified'",
+                (subscription_id,),
+            ).fetchone()[0] == 1
+
+        # A duplicate callback must be idempotent and must not extend the term twice.
+        _complete_verified_attempt(
+            request, attempt_id, organization_id, authority,
+            {"ref_id": f"ref-{suffix}", "verified_code": 100},
+        )
+        with psycopg.connect(database_url) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM subscription_history WHERE subscription_id=%s AND action='payment_verified'",
+                (subscription_id,),
+            ).fetchone()[0] == 1
+    finally:
+        with psycopg.connect(database_url) as connection:
+            connection.execute("DELETE FROM subscription_history WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM payment_attempts WHERE id=%s", (attempt_id,))
+            connection.execute("DELETE FROM subscriptions WHERE id=%s", (subscription_id,))
+            connection.execute("DELETE FROM plans WHERE code=%s", (plan_code,))
             connection.execute("DELETE FROM organizations WHERE id=%s", (organization_id,))
 
 
