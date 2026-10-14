@@ -181,16 +181,59 @@ def _complete_verified_attempt(
         subscription_id = attempt["subscription_id"]
         if subscription_id is not None:
             subscription = cn.execute(
-                """SELECT id FROM subscriptions
-                   WHERE id=%s AND organization_id=%s FOR UPDATE""",
+                """SELECT s.id, s.plan, s.status, s.ends_at,
+                          p.id AS plan_id, p.billing_period
+                   FROM subscriptions AS s
+                   LEFT JOIN plans AS p ON p.code = s.plan
+                   WHERE s.id=%s AND s.organization_id=%s
+                   FOR UPDATE OF s""",
                 (subscription_id, organization_id),
             ).fetchone()
             if not subscription:
                 raise ApiError(ErrorCode.VALIDATION_ERROR, "payment subscription no longer exists")
+
+            # Extend from the later of NOW() or the current expiry. Unknown
+            # legacy plan codes default to monthly rather than silently marking
+            # an expired subscription active forever.
+            period = subscription["billing_period"] or "month"
+            intervals = {
+                "month": "1 month",
+                "quarter": "3 months",
+                "year": "1 year",
+                "lifetime": None,
+            }
+            if period not in intervals:
+                raise ApiError(ErrorCode.VALIDATION_ERROR, "subscription has an unsupported billing period")
+            if period == "lifetime":
+                cn.execute(
+                    """UPDATE subscriptions SET status='active', starts_at=NOW(), ends_at=NULL
+                       WHERE id=%s AND organization_id=%s""",
+                    (subscription_id, organization_id),
+                )
+            else:
+                cn.execute(
+                    """UPDATE subscriptions
+                       SET status='active',
+                           starts_at=CASE WHEN status IN ('expired','cancelled','past_due')
+                                          THEN NOW() ELSE starts_at END,
+                           ends_at=GREATEST(COALESCE(ends_at,NOW()),NOW()) + %s::interval
+                       WHERE id=%s AND organization_id=%s""",
+                    (intervals[period], subscription_id, organization_id),
+                )
             cn.execute(
-                """UPDATE subscriptions SET status='active'
-                   WHERE id=%s AND organization_id=%s""",
-                (subscription_id, organization_id),
+                """INSERT INTO subscription_history
+                   (organization_id,subscription_id,plan_id,action,metadata)
+                   VALUES(%s,%s,%s,'payment_verified',%s)""",
+                (
+                    organization_id,
+                    subscription_id,
+                    subscription["plan_id"],
+                    psycopg.types.json.Jsonb({
+                        "payment_attempt_id": payment_attempt_id,
+                        "provider": "zarinpal",
+                        "provider_reference": authority,
+                    }),
+                ),
             )
         return dict(updated)
 
