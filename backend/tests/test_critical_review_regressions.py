@@ -84,15 +84,29 @@ def test_financial_report_totals_exclude_drafts_and_future_entries():
                 (entry_id, account_id, amount),
             )
 
-    request = SimpleNamespace(
-        app=SimpleNamespace(
-            state=SimpleNamespace(settings=SimpleNamespace(database_url=database_url))
+    try:
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(settings=SimpleNamespace(database_url=database_url))
+            )
         )
-    )
-    totals = _account_totals(request, organization_id, date(2026, 6, 30), ("revenue",))
-    assert len(totals) == 1
-    assert Decimal(totals[0]["credit"]) == Decimal("100")
-    assert Decimal(totals[0]["debit"]) == Decimal("0")
+        totals = _account_totals(request, organization_id, date(2026, 6, 30), ("revenue",))
+        assert len(totals) == 1
+        assert Decimal(totals[0]["credit"]) == Decimal("100")
+        assert Decimal(totals[0]["debit"]) == Decimal("0")
+    finally:
+        # Keep the shared CI database isolated for the persistence test, which
+        # resets organizations before exercising the durable store.
+        with psycopg.connect(database_url) as connection:
+            connection.execute(
+                """DELETE FROM journal_lines
+                   WHERE journal_entry_id IN
+                     (SELECT id FROM journal_entries WHERE organization_id=%s)""",
+                (organization_id,),
+            )
+            connection.execute("DELETE FROM journal_entries WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM accounts WHERE organization_id=%s", (organization_id,))
+            connection.execute("DELETE FROM organizations WHERE id=%s", (organization_id,))
 
 
 def test_only_managers_can_manage_members_and_managers_cannot_grant_owner():
