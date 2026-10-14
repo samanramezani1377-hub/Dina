@@ -1,6 +1,7 @@
 from decimal import Decimal
 from datetime import date
-import pytest\nfrom src.business_store import BusinessStore
+import pytest
+from src.business_store import BusinessStore
 
 def test_payment_idempotency_returns_original_payment():
     store=BusinessStore()
