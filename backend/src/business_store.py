@@ -248,14 +248,9 @@ class BusinessStore:
             if invoice["journal_entry_id"] is not None:
                 return invoice
             if Decimal(invoice["paid"]) > 0:
-                payments = conn.execute(
-                    "SELECT COUNT(*) AS count FROM payments WHERE organization_id=%s AND invoice_id=%s",
-                    (org, invoice_id),
-                ).fetchone()
-                if int(payments["count"]) > 0:
-                    raise ValueError(
-                        "historical invoice has payments without ledger entries; manual reconciliation is required"
-                    )
+                raise ValueError(
+                    "historical invoice has a nonzero paid balance; manual reconciliation is required"
+                )
 
             accounts = conn.execute(
                 """SELECT id,account_type FROM accounts
