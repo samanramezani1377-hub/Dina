@@ -313,28 +313,80 @@ class PaymentsPage extends StatefulWidget {
   @override State<PaymentsPage> createState() => _PaymentsPageState();
 }
 class _PaymentsPageState extends State<PaymentsPage> {
-  final invoice = TextEditingController(); final amount = TextEditingController(); final method = TextEditingController(text: 'other'); final reference = TextEditingController();
+  final invoice = TextEditingController();
+  final amount = TextEditingController();
+  final method = TextEditingController(text: 'other');
+  final reference = TextEditingController();
+  final cashAccount = TextEditingController();
+  final receivableAccount = TextEditingController();
+
   Future<void> pay() async {
     final invoiceId = int.tryParse(invoice.text.trim());
-    if (invoiceId == null) { showError(context, 'شناسه فاکتور معتبر نیست.'); return; }
+    final cashAccountId = int.tryParse(cashAccount.text.trim());
+    final receivableAccountId = int.tryParse(receivableAccount.text.trim());
+    if (invoiceId == null) {
+      showError(context, 'شناسه فاکتور معتبر نیست.');
+      return;
+    }
+    if (cashAccountId == null || receivableAccountId == null) {
+      showError(context, 'برای ثبت حسابداری پرداخت، شناسه صندوق/بانک و حساب دریافتنی الزامی است.');
+      return;
+    }
     try {
-      await AppScope.of(context).api.post(pathFor(widget.org, 'invoices/$invoiceId/payments'), body: {
-        'amount': amount.text.trim(), 'method': method.text.trim(), 'reference': reference.text.trim().isEmpty ? null : reference.text.trim(),
-      }, extraHeaders: {'Idempotency-Key': 'dina-${DateTime.now().microsecondsSinceEpoch}'});
-      if (!mounted) return; widget.onChanged();
-    } catch (error) { if (mounted) showError(context, error); }
+      await AppScope.of(context).api.post(
+        pathFor(widget.org, 'invoices/$invoiceId/payments'),
+        body: {
+          'amount': amount.text.trim(),
+          'method': method.text.trim(),
+          'reference': reference.text.trim().isEmpty ? null : reference.text.trim(),
+          'cash_account_id': cashAccountId,
+          'receivable_account_id': receivableAccountId,
+        },
+        extraHeaders: {'Idempotency-Key': 'dina-${DateTime.now().microsecondsSinceEpoch}'},
+      );
+      if (!mounted) return;
+      widget.onChanged();
+    } catch (error) {
+      if (mounted) showError(context, error);
+    }
   }
-  @override void dispose() { invoice.dispose(); amount.dispose(); method.dispose(); reference.dispose(); super.dispose(); }
-  @override Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(20), children: [
-    Text('ثبت پرداخت', style: Theme.of(context).textTheme.headlineSmall),
-    Card(child: Padding(padding: const EdgeInsets.all(14), child: Wrap(spacing: 10, children: [
-      SizedBox(width: 130, child: TextField(controller: invoice, decoration: const InputDecoration(labelText: 'شناسه فاکتور'))),
-      SizedBox(width: 150, child: TextField(controller: amount, decoration: const InputDecoration(labelText: 'مبلغ'))),
-      SizedBox(width: 140, child: TextField(controller: method, decoration: const InputDecoration(labelText: 'روش'))),
-      SizedBox(width: 180, child: TextField(controller: reference, decoration: const InputDecoration(labelText: 'مرجع'))),
-      FilledButton(onPressed: pay, child: const Text('ثبت پرداخت')),
-    ]))),
-  ]);
+
+  @override
+  void dispose() {
+    invoice.dispose();
+    amount.dispose();
+    method.dispose();
+    reference.dispose();
+    cashAccount.dispose();
+    receivableAccount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(20),
+    children: [
+      Text('ثبت پرداخت', style: Theme.of(context).textTheme.headlineSmall),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              SizedBox(width: 130, child: TextField(controller: invoice, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه فاکتور'))),
+              SizedBox(width: 150, child: TextField(controller: amount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'مبلغ'))),
+              SizedBox(width: 140, child: TextField(controller: method, decoration: const InputDecoration(labelText: 'روش'))),
+              SizedBox(width: 180, child: TextField(controller: reference, decoration: const InputDecoration(labelText: 'مرجع'))),
+              SizedBox(width: 190, child: TextField(controller: cashAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه صندوق/بانک'))),
+              SizedBox(width: 190, child: TextField(controller: receivableAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه حساب دریافتنی'))),
+              FilledButton(onPressed: pay, child: const Text('ثبت پرداخت')),
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
 }
 
 
