@@ -31,6 +31,17 @@ class TenantStore:
         with self._connect() as conn:
             row = conn.execute("SELECT role FROM memberships WHERE user_id=%s AND organization_id=%s", (user_id, organization_id)).fetchone()
         return None if row is None else str(row["role"])
+    def owner_count(self, organization_id: int) -> int:
+        if self._memory:
+            return sum(1 for (uid, oid), role in self._memberships.items()
+                       if oid == organization_id and role == "owner")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM memberships WHERE organization_id=%s AND role='owner'",
+                (organization_id,),
+            ).fetchone()
+        return int(row["count"])
+
     def can_access(self, user_id: int, organization_id: int) -> bool:
         return self.user_role(user_id, organization_id) is not None
     def create_organization(self, name: str, user_id: int) -> Organization:
