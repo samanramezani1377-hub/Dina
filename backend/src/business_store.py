@@ -31,6 +31,17 @@ class TenantStore:
         with self._connect() as conn:
             row = conn.execute("SELECT role FROM memberships WHERE user_id=%s AND organization_id=%s", (user_id, organization_id)).fetchone()
         return None if row is None else str(row["role"])
+    def owner_count(self, organization_id: int) -> int:
+        if self._memory:
+            return sum(1 for (uid, oid), role in self._memberships.items()
+                       if oid == organization_id and role == "owner")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM memberships WHERE organization_id=%s AND role='owner'",
+                (organization_id,),
+            ).fetchone()
+        return int(row["count"])
+
     def can_access(self, user_id: int, organization_id: int) -> bool:
         return self.user_role(user_id, organization_id) is not None
     def create_organization(self, name: str, user_id: int) -> Organization:
@@ -49,9 +60,20 @@ class TenantStore:
         if self._memory:
             if organization_id not in self._orgs:
                 raise ValueError("organization does not exist")
+            previous_role = self._memberships.get((user_id, organization_id))
+            if previous_role == "owner" and role != "owner" and self.owner_count(organization_id) <= 1:
+                raise ValueError("cannot demote the last organization owner")
             self._memberships[(user_id, organization_id)] = role
             return
         with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id, role FROM memberships WHERE organization_id=%s FOR UPDATE",
+                (organization_id,),
+            ).fetchall()
+            previous = next((row for row in rows if int(row["user_id"]) == user_id), None)
+            owner_count = sum(row["role"] == "owner" for row in rows)
+            if previous and previous["role"] == "owner" and role != "owner" and owner_count <= 1:
+                raise ValueError("cannot demote the last organization owner")
             conn.execute(
                 "INSERT INTO memberships(user_id,organization_id,role) VALUES(%s,%s,%s) "
                 "ON CONFLICT (user_id,organization_id) DO UPDATE SET role=EXCLUDED.role",
@@ -59,10 +81,27 @@ class TenantStore:
             )
     def remove_membership(self, user_id: int, organization_id: int) -> None:
         if self._memory:
+            role = self._memberships.get((user_id, organization_id))
+            if role == "owner" and self.owner_count(organization_id) <= 1:
+                raise ValueError("cannot remove the last organization owner")
             self._memberships.pop((user_id, organization_id), None)
             return
+        # Lock all membership rows for this organization so two concurrent
+        # removals cannot both observe two owners and remove both.
         with self._connect() as conn:
-            conn.execute("DELETE FROM memberships WHERE user_id=%s AND organization_id=%s", (user_id, organization_id))
+            rows = conn.execute(
+                "SELECT user_id, role FROM memberships WHERE organization_id=%s FOR UPDATE",
+                (organization_id,),
+            ).fetchall()
+            target = next((row for row in rows if int(row["user_id"]) == user_id), None)
+            if target is None:
+                return
+            if target["role"] == "owner" and sum(row["role"] == "owner" for row in rows) <= 1:
+                raise ValueError("cannot remove the last organization owner")
+            conn.execute(
+                "DELETE FROM memberships WHERE user_id=%s AND organization_id=%s",
+                (user_id, organization_id),
+            )
 
 class BusinessStore:
     def __init__(self, database_url: str | None = None):

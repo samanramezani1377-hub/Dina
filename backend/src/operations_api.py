@@ -117,21 +117,46 @@ def create_organization(payload: OrganizationInput, request: Request, user_id: i
 
 @router.post("/organizations/{organization_id}/members", status_code=204)
 def add_member(organization_id: int, member_user_id: int, role: str, request: Request,
-               caller: Caller = Depends(accounting_caller)):
+               caller: Caller = Depends(manager_caller)):
     if role not in ROLES:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "invalid role")
+    memberships = request.app.state.memberships
+    target_role = memberships.user_role(member_user_id, organization_id)
+    # Only an owner may modify an owner/manager or grant a management role.
+    if target_role in {"owner", "manager"} and caller.role != "owner":
+        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can modify an owner or manager")
+    if role in {"owner", "manager"} and caller.role != "owner":
+        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can grant an owner or manager role")
+    if target_role == "owner" and role != "owner" and memberships.owner_count(organization_id) <= 1:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "cannot demote the last organization owner")
     try:
-        request.app.state.memberships.add_membership(member_user_id, organization_id, role)
+        memberships.add_membership(member_user_id, organization_id, role)
     except ValueError as exc:
-        raise ApiError(ErrorCode.ORGANIZATION_NOT_FOUND, str(exc)) from exc
+        code = ErrorCode.VALIDATION_ERROR if "last organization owner" in str(exc) else ErrorCode.ORGANIZATION_NOT_FOUND
+        raise ApiError(code, str(exc)) from exc
     record(action=AuditAction.MEMBERSHIP_ADDED, entity="membership",
            entity_id=f"{member_user_id}:{organization_id}", user_id=caller.user_id,
            organization_id=organization_id, metadata={"member_user_id": member_user_id, "role": role})
 
 @router.delete("/organizations/{organization_id}/members/{member_user_id}", status_code=204)
 def remove_member(organization_id: int, member_user_id: int, request: Request,
-                  caller: Caller = Depends(accounting_caller)):
-    request.app.state.memberships.remove_membership(member_user_id, organization_id)
+                  caller: Caller = Depends(manager_caller)):
+    memberships = request.app.state.memberships
+    target_role = memberships.user_role(member_user_id, organization_id)
+    if target_role is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "membership not found")
+    if target_role in {"owner", "manager"} and caller.role != "owner":
+        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can remove an owner or manager")
+    if target_role == "owner":
+        owner_count = memberships.owner_count(organization_id)
+        if owner_count <= 1:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "cannot remove the last organization owner")
+        if caller.role != "owner":
+            raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can remove another owner")
+    try:
+        memberships.remove_membership(member_user_id, organization_id)
+    except ValueError as exc:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
     record(action=AuditAction.MEMBERSHIP_REMOVED, entity="membership",
            entity_id=f"{member_user_id}:{organization_id}", user_id=caller.user_id,
            organization_id=organization_id, metadata={"member_user_id": member_user_id})
@@ -207,7 +232,7 @@ def delete_journal(organization_id: int, entry_id: int, request: Request,
 
 @router.post("/organizations/{organization_id}/customers", status_code=201)
 def create_customer(organization_id: int, payload: CustomerInput, request: Request,
-                    caller: Caller = Depends(member_caller)):
+                    caller: Caller = Depends(sales_caller)):
     return _json(request.app.state.business_store.create_customer(
         organization_id, payload.name, payload.email, payload.phone
     ))
@@ -219,7 +244,7 @@ def list_customers(organization_id: int, request: Request,
 
 @router.post("/organizations/{organization_id}/invoices", status_code=201)
 def create_invoice(organization_id: int, payload: InvoiceInput, request: Request,
-                   caller: Caller = Depends(member_caller)):
+                   caller: Caller = Depends(sales_caller)):
     try:
         invoice = request.app.state.business_store.create_invoice(
             organization_id, payload.customer_id, payload.invoice_no, payload.total,

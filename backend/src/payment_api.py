@@ -71,7 +71,28 @@ def _json(value):
 def _provider(name: str, request: Request) -> PaymentProvider:
     normalized = name.strip().lower()
     if normalized == "zarinpal":
-        return ZarinPalProvider(request.app.state.settings)
+        from types import SimpleNamespace
+        from .platform_settings_api import read_setting_value
+
+        settings = request.app.state.settings
+        merchant_id = read_setting_value("zarinpal_merchant_id")
+        callback_url = read_setting_value("zarinpal_callback_url")
+        sandbox_value = read_setting_value("zarinpal_sandbox")
+        if sandbox_value is None:
+            sandbox = settings.zarinpal_sandbox
+        elif sandbox_value.strip().lower() in {"1", "true", "yes", "on"}:
+            sandbox = True
+        elif sandbox_value.strip().lower() in {"0", "false", "no", "off"}:
+            sandbox = False
+        else:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "invalid platform setting: zarinpal_sandbox")
+        effective_settings = SimpleNamespace(
+            zarinpal_merchant_id=merchant_id if merchant_id is not None else settings.zarinpal_merchant_id,
+            zarinpal_callback_url=callback_url if callback_url is not None else settings.zarinpal_callback_url,
+            zarinpal_sandbox=sandbox,
+            zarinpal_timeout_seconds=settings.zarinpal_timeout_seconds,
+        )
+        return ZarinPalProvider(effective_settings)
     raise ApiError(ErrorCode.VALIDATION_ERROR, f"unsupported payment provider: {name}")
 
 
@@ -121,6 +142,102 @@ def _mark_attempt(
     return dict(row)
 
 
+def _complete_verified_attempt(
+    request: Request,
+    payment_attempt_id: int,
+    organization_id: int,
+    authority: str,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Atomically mark a verified gateway payment and activate its subscription."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    with psycopg.connect(_db(request), row_factory=dict_row) as cn:
+        attempt = cn.execute(
+            """SELECT * FROM payment_attempts
+               WHERE id=%s AND organization_id=%s AND provider='zarinpal'
+               FOR UPDATE""",
+            (payment_attempt_id, organization_id),
+        ).fetchone()
+        if not attempt:
+            raise ApiError(ErrorCode.NOT_FOUND, "payment attempt not found")
+        if attempt["status"] == "succeeded":
+            return dict(attempt)
+        if attempt["status"] not in {"created", "pending"}:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "payment is no longer eligible for verification")
+        if attempt["provider_reference"] and attempt["provider_reference"] != authority:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "ZarinPal authority mismatch")
+
+        merged = dict(attempt["metadata"] or {})
+        merged.update(metadata)
+        updated = cn.execute(
+            """UPDATE payment_attempts
+               SET status='succeeded', provider_reference=%s, metadata=%s, updated_at=NOW()
+               WHERE id=%s AND organization_id=%s
+               RETURNING *""",
+            (authority, psycopg.types.json.Jsonb(merged), payment_attempt_id, organization_id),
+        ).fetchone()
+        subscription_id = attempt["subscription_id"]
+        if subscription_id is not None:
+            subscription = cn.execute(
+                """SELECT s.id, s.plan, s.status, s.ends_at,
+                          p.id AS plan_id, p.billing_period
+                   FROM subscriptions AS s
+                   LEFT JOIN plans AS p ON p.code = s.plan
+                   WHERE s.id=%s AND s.organization_id=%s
+                   FOR UPDATE OF s""",
+                (subscription_id, organization_id),
+            ).fetchone()
+            if not subscription:
+                raise ApiError(ErrorCode.VALIDATION_ERROR, "payment subscription no longer exists")
+
+            # Extend from the later of NOW() or the current expiry. Unknown
+            # legacy plan codes default to monthly rather than silently marking
+            # an expired subscription active forever.
+            period = subscription["billing_period"] or "month"
+            intervals = {
+                "month": "1 month",
+                "quarter": "3 months",
+                "year": "1 year",
+                "lifetime": None,
+            }
+            if period not in intervals:
+                raise ApiError(ErrorCode.VALIDATION_ERROR, "subscription has an unsupported billing period")
+            if period == "lifetime":
+                cn.execute(
+                    """UPDATE subscriptions SET status='active', starts_at=NOW(), ends_at=NULL
+                       WHERE id=%s AND organization_id=%s""",
+                    (subscription_id, organization_id),
+                )
+            else:
+                cn.execute(
+                    """UPDATE subscriptions
+                       SET status='active',
+                           starts_at=CASE WHEN status IN ('expired','cancelled','past_due')
+                                          THEN NOW() ELSE starts_at END,
+                           ends_at=GREATEST(COALESCE(ends_at,NOW()),NOW()) + %s::interval
+                       WHERE id=%s AND organization_id=%s""",
+                    (intervals[period], subscription_id, organization_id),
+                )
+            cn.execute(
+                """INSERT INTO subscription_history
+                   (organization_id,subscription_id,plan_id,action,metadata)
+                   VALUES(%s,%s,%s,'payment_verified',%s)""",
+                (
+                    organization_id,
+                    subscription_id,
+                    subscription["plan_id"],
+                    psycopg.types.json.Jsonb({
+                        "payment_attempt_id": payment_attempt_id,
+                        "provider": "zarinpal",
+                        "provider_reference": authority,
+                    }),
+                ),
+            )
+        return dict(updated)
+
+
 @router.post("/{organization_id}/payments/attempts", status_code=201)
 def create_payment_attempt(
     organization_id: int,
@@ -134,46 +251,56 @@ def create_payment_attempt(
     provider_name = payload.provider.strip().lower()
     import psycopg
     from psycopg.rows import dict_row
+    if provider_name != "zarinpal":
+        raise ApiError(ErrorCode.VALIDATION_ERROR, f"unsupported payment provider: {provider_name}")
+
+    currency = payload.currency.strip().upper()
     with psycopg.connect(_db(request), row_factory=dict_row) as cn:
-        existing = cn.execute(
-            """SELECT * FROM payment_attempts
-               WHERE organization_id=%s AND provider=%s AND idempotency_key=%s""",
-            (organization_id, provider_name, key),
-        ).fetchone()
-        if existing:
-            return _json(dict(existing))
         if payload.subscription_id is not None:
             subscription = cn.execute(
-                "SELECT id FROM subscriptions WHERE id=%s AND organization_id=%s",
+                "SELECT id FROM subscriptions WHERE id=%s AND organization_id=%s FOR UPDATE",
                 (payload.subscription_id, organization_id),
             ).fetchone()
             if not subscription:
                 raise ApiError(ErrorCode.NOT_FOUND, "subscription not found")
-        try:
-            row = cn.execute(
-                """INSERT INTO payment_attempts
-                (organization_id,provider,idempotency_key,amount,currency,subscription_id,metadata)
-                VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-                (
-                    organization_id,
-                    provider_name,
-                    key,
-                    payload.amount,
-                    payload.currency.upper(),
-                    payload.subscription_id,
-                    psycopg.types.json.Jsonb(payload.metadata),
-                ),
-            ).fetchone()
-        except psycopg.errors.UniqueViolation:
+        row = cn.execute(
+            """INSERT INTO payment_attempts
+               (organization_id,provider,idempotency_key,amount,currency,subscription_id,metadata)
+               VALUES(%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (organization_id,provider,idempotency_key) DO NOTHING
+               RETURNING *""",
+            (
+                organization_id, provider_name, key, payload.amount, currency,
+                payload.subscription_id, psycopg.types.json.Jsonb(payload.metadata),
+            ),
+        ).fetchone()
+        created_now = row is not None
+        if row is None:
             row = cn.execute(
                 """SELECT * FROM payment_attempts
-                   WHERE organization_id=%s AND provider=%s AND idempotency_key=%s""",
+                   WHERE organization_id=%s AND provider=%s AND idempotency_key=%s
+                   FOR UPDATE""",
                 (organization_id, provider_name, key),
             ).fetchone()
+            if row is None:
+                raise ApiError(ErrorCode.VALIDATION_ERROR, "payment idempotency conflict; retry the request")
+            same_request = (
+                Decimal(str(row["amount"])) == payload.amount
+                and str(row["currency"]).upper() == currency
+                and row["subscription_id"] == payload.subscription_id
+            )
+            if not same_request:
+                raise ApiError(
+                    ErrorCode.VALIDATION_ERROR,
+                    "Idempotency-Key was already used with different payment details",
+                    {"payment_attempt_id": row["id"]},
+                )
+            # A replay must never create a second gateway payment. Return the
+            # original result (including its original payment URL when present).
+            existing = dict(row)
+            payment_url = (existing.get("metadata") or {}).get("payment_url")
+            return _json({**existing, **({"payment_url": payment_url} if payment_url else {})})
         attempt = dict(row)
-
-    if provider_name != "zarinpal":
-        raise ApiError(ErrorCode.VALIDATION_ERROR, f"unsupported payment provider: {provider_name}")
 
     try:
         provider = _provider(provider_name, request)
@@ -247,7 +374,7 @@ def zarinpal_callback(
 
     with psycopg.connect(_db(request), row_factory=dict_row) as cn:
         attempt = cn.execute(
-            """SELECT id,organization_id,amount,currency,status,provider_reference
+            """SELECT id,organization_id,amount,currency,status,provider_reference,subscription_id
                FROM payment_attempts
                WHERE id=%s AND organization_id=%s AND provider='zarinpal' FOR UPDATE""",
             (payment_attempt_id, organization_id),
@@ -259,22 +386,27 @@ def zarinpal_callback(
         if attempt["status"] == "succeeded":
             return {"status": "succeeded", "payment_attempt_id": payment_attempt_id, "already_verified": True}
         if Status != "OK":
-            cn.execute(
-                "UPDATE payment_attempts SET status='cancelled',updated_at=NOW() WHERE id=%s",
-                (payment_attempt_id,),
-            )
-            return {"status": "cancelled", "payment_attempt_id": payment_attempt_id}
+            if attempt["status"] in {"created", "pending"}:
+                cn.execute(
+                    """UPDATE payment_attempts SET status='cancelled',updated_at=NOW()
+                       WHERE id=%s AND organization_id=%s AND status IN ('created','pending')""",
+                    (payment_attempt_id, organization_id),
+                )
+                return {"status": "cancelled", "payment_attempt_id": payment_attempt_id}
+            return {"status": attempt["status"], "payment_attempt_id": payment_attempt_id}
+        if attempt["status"] not in {"created", "pending", "succeeded"}:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "payment is no longer eligible for verification")
         amount = Decimal(str(attempt["amount"]))
         currency = str(attempt["currency"])
         provider = ZarinPalProvider(request.app.state.settings)
 
     verified = provider.verify(Authority, amount, currency)
-    updated = _mark_attempt(
+    updated = _complete_verified_attempt(
         request,
         payment_attempt_id,
-        status="succeeded",
-        provider_reference=Authority,
-        metadata={"ref_id": verified.get("ref_id"), "verified_code": verified["code"]},
+        organization_id,
+        Authority,
+        {"ref_id": verified.get("ref_id"), "verified_code": verified["code"]},
     )
     return {
         "status": "succeeded",
@@ -287,15 +419,27 @@ def zarinpal_callback(
 
 @router.post("/{organization_id}/payments/webhook", status_code=202)
 def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request: Request):
-    configured_secret = os.environ.get("PAYMENT_WEBHOOK_SECRET", "").strip()
+    from .platform_settings_api import read_setting_value
+    configured_secret = (read_setting_value("zarinpal_webhook_secret") or os.environ.get("PAYMENT_WEBHOOK_SECRET", "")).strip()
     supplied_secret = request.headers.get("X-Payment-Webhook-Secret", "")
     if not configured_secret or not hmac.compare_digest(supplied_secret, configured_secret):
         raise ApiError(ErrorCode.PERMISSION_DENIED, "invalid payment webhook signature")
     if payload.organization_id not in (None, organization_id):
         raise ApiError(ErrorCode.VALIDATION_ERROR, "organization mismatch")
+    provider_name = payload.provider.strip().lower()
+    if provider_name != "zarinpal":
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "unsupported payment webhook provider")
     allowed = {"created", "pending", "succeeded", "failed", "cancelled"}
     if payload.status is not None and payload.status not in allowed:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "invalid payment status")
+    # A shared application webhook secret authenticates the sender, but it is
+    # not a gateway receipt. Successful payments must pass the provider's
+    # amount-bound verification endpoint before they can activate a subscription.
+    if payload.status == "succeeded":
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "successful payments must be verified through the payment provider",
+        )
     import psycopg
     from psycopg.rows import dict_row
     with psycopg.connect(_db(request), row_factory=dict_row) as cn:
@@ -316,11 +460,13 @@ def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request:
             return {"accepted": True, "duplicate": True}
         if payload.payment_attempt_id is not None:
             attempt = cn.execute(
-                "SELECT id,status FROM payment_attempts WHERE id=%s AND organization_id=%s FOR UPDATE",
+                "SELECT id,status,provider FROM payment_attempts WHERE id=%s AND organization_id=%s FOR UPDATE",
                 (payload.payment_attempt_id, organization_id),
             ).fetchone()
             if not attempt:
                 raise ApiError(ErrorCode.NOT_FOUND, "payment attempt not found")
+            if attempt["provider"] != provider_name:
+                raise ApiError(ErrorCode.VALIDATION_ERROR, "payment provider does not match the attempt")
             if payload.status is not None:
                 transitions = {
                     "created": {"pending", "failed", "cancelled"},
@@ -335,7 +481,8 @@ def payment_webhook(organization_id: int, payload: PaymentWebhookInput, request:
                 cn.execute(
                     """UPDATE payment_attempts SET status=%s,
                        provider_reference=COALESCE(%s,provider_reference),updated_at=NOW()
-                       WHERE id=%s""",
-                    (payload.status, payload.provider_reference, payload.payment_attempt_id),
+                       WHERE id=%s AND organization_id=%s AND provider=%s""",
+                    (payload.status, payload.provider_reference, payload.payment_attempt_id,
+                     organization_id, provider_name),
                 )
     return {"accepted": True, "duplicate": False, "event_id": payload.event_id}

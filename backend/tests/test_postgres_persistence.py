@@ -20,6 +20,11 @@ def test_postgres_store_persists_and_enforces_tenant_scope():
         org2 = conn.execute(
             "INSERT INTO organizations(name) VALUES ('Dina test two') RETURNING id"
         ).fetchone()[0]
+        conn.execute(
+            """INSERT INTO fiscal_years(organization_id,name,starts_on,ends_on,status)
+               VALUES (%s,'FY2026','2026-01-01','2026-12-31','open')""",
+            (org1,),
+        )
 
     cash = store.add_account(org1, "1100", "Cash", "asset")
     revenue = store.add_account(org1, "4100", "Revenue", "revenue")
@@ -48,3 +53,26 @@ def test_postgres_store_persists_and_enforces_tenant_scope():
         assert conn.execute(
             "SELECT count(*) FROM journal_entries WHERE id=%s", (entry.id,)
         ).fetchone()[0] == 1
+
+    other_cash = store.add_account(org2, "1100", "Other tenant cash", "asset")
+    other_entry = store.add_entry(
+        org2,
+        "JV-PERSIST-OTHER",
+        "other tenant draft",
+        date(2026, 10, 1),
+        [
+            JournalLine(other_cash.id, Decimal("1"), Decimal("0")),
+            JournalLine(store.add_account(org2, "4100", "Other tenant revenue", "revenue").id,
+                        Decimal("0"), Decimal("1")),
+        ],
+        status=DRAFT,
+    )
+    # A direct SQL write must not be able to connect one tenant's account to
+    # another tenant's journal, even if a future API path forgets validation.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with psycopg.connect(store.database_url) as conn:
+            conn.execute(
+                """INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit)
+                   VALUES (%s,%s,1,0)""",
+                (other_entry.id, cash.id),
+            )

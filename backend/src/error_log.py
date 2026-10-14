@@ -66,24 +66,56 @@ def record_error(database_url: str, *, correlation_id: str, code: str, message: 
         logger.exception("failed to persist error log correlation_id=%s", correlation_id)
 
 def list_errors(database_url: str, *, limit: int = 100, offset: int = 0,
-                code: str | None = None, unresolved_only: bool = False) -> list[dict[str, Any]]:
-    limit = max(1, min(limit, 500)); offset = max(0, offset)
-    clauses=[]; params=[]
-    if code: clauses.append("code=%s"); params.append(code)
-    if unresolved_only: clauses.append("resolved_at IS NULL")
-    where=(" WHERE "+" AND ".join(clauses)) if clauses else ""
+                code: str | None = None, unresolved_only: bool = False,
+                organization_id: int | None = None) -> list[dict[str, Any]]:
+    """List error records, optionally scoped to a single tenant.
+
+    Organization-facing APIs must always supply organization_id. Leaving it
+    optional preserves the internal operational use case for platform-wide
+    diagnostics, but it must never be omitted by a tenant-facing endpoint.
+    """
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if organization_id is not None:
+        clauses.append("organization_id=%s")
+        params.append(organization_id)
+    if code:
+        clauses.append("code=%s")
+        params.append(code)
+    if unresolved_only:
+        clauses.append("resolved_at IS NULL")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     with _connect(database_url) as conn:
         with conn.cursor() as cur:
-            cur.execute(f"""SELECT id, correlation_id, occurred_at, level, code, message,
-                http_status, method, path, user_id, organization_id, ip_address::text AS ip_address,
-                user_agent, details, traceback, resolved_at, resolved_by
-                FROM error_logs{where} ORDER BY occurred_at DESC LIMIT %s OFFSET %s""",
-                (*params, limit, offset))
+            cur.execute(
+                f"""SELECT id, correlation_id, occurred_at, level, code, message,
+                    http_status, method, path, user_id, organization_id,
+                    ip_address::text AS ip_address, user_agent, details, traceback,
+                    resolved_at, resolved_by
+                    FROM error_logs{where}
+                    ORDER BY occurred_at DESC LIMIT %s OFFSET %s""",
+                (*params, limit, offset),
+            )
             return list(cur.fetchall())
 
-def resolve_error(database_url: str, error_id: int, user_id: int) -> bool:
+
+def resolve_error(database_url: str, error_id: int, user_id: int,
+                  organization_id: int | None = None) -> bool:
+    """Resolve one error, scoped to a tenant when called from its UI."""
     with _connect(database_url) as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE error_logs SET resolved_at=NOW(), resolved_by=%s WHERE id=%s AND resolved_at IS NULL",
-                        (user_id, error_id))
+            if organization_id is None:
+                cur.execute(
+                    """UPDATE error_logs SET resolved_at=NOW(), resolved_by=%s
+                       WHERE id=%s AND resolved_at IS NULL""",
+                    (user_id, error_id),
+                )
+            else:
+                cur.execute(
+                    """UPDATE error_logs SET resolved_at=NOW(), resolved_by=%s
+                       WHERE id=%s AND organization_id=%s AND resolved_at IS NULL""",
+                    (user_id, error_id, organization_id),
+                )
             return cur.rowcount == 1

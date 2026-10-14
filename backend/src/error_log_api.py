@@ -21,12 +21,12 @@ def errors(organization_id: int, request: Request, caller: Caller = Depends(requ
            unresolved_only: bool = False):
     settings = request.app.state.settings
     return {"items": list_errors(settings.database_url, limit=limit, offset=offset,
-                                  code=code, unresolved_only=unresolved_only)}
+                                  code=code, unresolved_only=unresolved_only, organization_id=organization_id)}
 
 @router.post("/{organization_id}/errors/{error_id}/resolve")
 def resolve(organization_id: int, error_id: int, request: Request,
             caller: Caller = Depends(require_error_admin)):
-    ok = resolve_error(request.app.state.settings.database_url, error_id, caller.user_id)
+    ok = resolve_error(request.app.state.settings.database_url, error_id, caller.user_id, organization_id=organization_id)
     if not ok:
         raise ApiError(ErrorCode.NOT_FOUND, "error log was not found or is already resolved",
                        {"error_id": error_id})

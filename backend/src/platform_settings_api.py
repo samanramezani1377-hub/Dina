@@ -11,7 +11,7 @@ from .errors import ApiError, ErrorCode
 router=APIRouter(prefix="/api/v1/platform/settings",tags=["platform-settings"])
 
 ALLOWED_KEYS={
- "zarinpal_merchant_id","zarinpal_callback_url","zarinpal_webhook_secret",
+ "zarinpal_merchant_id","zarinpal_callback_url","zarinpal_webhook_secret","zarinpal_sandbox",
  "taxpayer_system_username","taxpayer_system_password","taxpayer_system_client_id",
  "taxpayer_system_client_secret","taxpayer_system_fiscal_id","taxpayer_system_api_url",
  "backup_database_url","backup_storage_url","backup_access_key","backup_secret_key",
@@ -19,7 +19,7 @@ ALLOWED_KEYS={
  "android_key_password","android_store_password","windows_signing_certificate_b64",
  "windows_signing_password","e2e_base_url","e2e_token"
 }
-SECRET_KEYS=ALLOWED_KEYS-{ "zarinpal_callback_url","taxpayer_system_api_url","backup_storage_url","monitoring_dsn","e2e_base_url","android_key_alias"}
+SECRET_KEYS=ALLOWED_KEYS-{ "zarinpal_callback_url","taxpayer_system_api_url","backup_storage_url","monitoring_dsn","e2e_base_url","android_key_alias","zarinpal_sandbox"}
 
 class SettingIn(BaseModel):
  value:str=Field(max_length=10000)
@@ -28,6 +28,27 @@ def _fernet():
     raw=get_settings().require_secret_key().encode()
     key=base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
     return Fernet(key)
+
+
+def read_setting_value(key: str) -> str | None:
+    """Read and decrypt a configured platform setting for trusted backend use.
+
+    This is intentionally separate from the HTTP admin endpoint: secrets are
+    never returned to clients, but the gateway adapter can consume them.
+    """
+    if key not in ALLOWED_KEYS:
+        raise ValueError("unknown platform setting")
+    with _conn() as connection:
+        row = connection.execute(
+            "SELECT setting_value FROM platform_settings WHERE setting_key=%s",
+            (key,),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        return _fernet().decrypt(row["setting_value"].encode()).decode()
+    except Exception as exc:
+        raise RuntimeError(f"platform setting {key!r} cannot be decrypted") from exc
 
 @router.get("")
 def get_settings_page(_:int=Depends(require_platform_admin)):

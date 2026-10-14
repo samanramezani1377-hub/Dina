@@ -144,6 +144,11 @@ jobs:
         env:
           DINA_BASE_URL: ${{ env.DINA_BASE_URL }}
 
+      - name: Run real accounting HTTP E2E
+        run: python scripts/e2e_staging.py
+        env:
+          DINA_API_BASE_URL: ${{ env.DINA_BASE_URL }}
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:

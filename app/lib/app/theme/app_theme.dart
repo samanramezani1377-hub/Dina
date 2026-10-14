@@ -13,12 +13,15 @@ abstract final class AppTheme {
 
   static ThemeData _materialTheme(Brightness brightness) {
     final ColorScheme scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF6750A4),
+      seedColor: const Color(0xFF14532D),
       brightness: brightness,
     );
     return ThemeData(
-      useMaterial3: true,
+      useMaterial3: false,
       colorScheme: scheme,
+      scaffoldBackgroundColor: brightness == Brightness.light
+          ? const Color(0xFFFFFFFF)
+          : const Color(0xFF101713),
       fontFamily: 'Vazirmatn',
       visualDensity: VisualDensity.standard,
     );

@@ -48,6 +48,27 @@ def main() -> None:
             (user_id, org_id),
         )
 
+        today = date.today()
+        open_year = conn.execute(
+            """SELECT id FROM fiscal_years
+               WHERE organization_id=%s AND status='open'
+                 AND starts_on<=%s AND ends_on>=%s LIMIT 1""",
+            (org_id, today, today),
+        ).fetchone()
+        if open_year is None:
+            overlap = conn.execute(
+                """SELECT status FROM fiscal_years
+                   WHERE organization_id=%s AND starts_on<=%s AND ends_on>=%s LIMIT 1""",
+                (org_id, date(today.year, 12, 31), date(today.year, 1, 1)),
+            ).fetchone()
+            if overlap:
+                raise RuntimeError("staging organization has a fiscal year for the current year, but it is not open")
+            conn.execute(
+                """INSERT INTO fiscal_years(organization_id,name,starts_on,ends_on,status)
+                   VALUES(%s,%s,%s,%s,'open')""",
+                (org_id, f"FY{today.year}", date(today.year, 1, 1), date(today.year, 12, 31)),
+            )
+
         account_ids = {}
         for code, name, account_type in ACCOUNTS:
             row = conn.execute(
