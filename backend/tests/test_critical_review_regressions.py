@@ -163,9 +163,9 @@ def test_verified_payment_renews_subscription_once():
                 "SELECT status,ends_at FROM subscriptions WHERE id=%s",
                 (subscription_id,),
             ).fetchone()
-            assert subscription["status"] == "active"
-            assert subscription["ends_at"] is not None
-            assert subscription["ends_at"].date() > date.today()
+            assert subscription[0] == "active"
+            assert subscription[1] is not None
+            assert subscription[1].date() > date.today()
             assert connection.execute(
                 "SELECT COUNT(*) FROM subscription_history WHERE subscription_id=%s AND action='payment_verified'",
                 (subscription_id,),
