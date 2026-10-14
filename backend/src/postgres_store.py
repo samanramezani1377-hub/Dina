@@ -212,14 +212,38 @@ class PostgresStore:
 
     def post_entry(self, organization_id: int, entry_id: int) -> JournalEntry:
         with self._connect() as conn:
+            entry = conn.execute(
+                """SELECT id, entry_date, status FROM journal_entries
+                   WHERE id=%s AND organization_id=%s FOR UPDATE""",
+                (entry_id, organization_id),
+            ).fetchone()
+            if entry is None:
+                raise AccountingError(ErrorCode.JOURNAL_NOT_FOUND, "journal entry not found")
+            if entry["status"] != DRAFT:
+                raise AccountingError(
+                    ErrorCode.JOURNAL_IMMUTABLE,
+                    f"entry {entry_id} is {entry['status']} and cannot be posted",
+                )
+            fiscal_year = conn.execute(
+                """SELECT id FROM fiscal_years
+                   WHERE organization_id=%s AND status='open'
+                     AND starts_on<=%s AND ends_on>=%s
+                   FOR UPDATE""",
+                (organization_id, entry["entry_date"], entry["entry_date"]),
+            ).fetchone()
+            if fiscal_year is None:
+                raise AccountingError(
+                    ErrorCode.VALIDATION_ERROR,
+                    "no open fiscal year covers this journal entry date",
+                )
             row = conn.execute(
                 """UPDATE journal_entries SET status='posted',posted_at=NOW()
                    WHERE id=%s AND organization_id=%s AND status='draft'
-                   RETURNING id""", (entry_id, organization_id)
+                   RETURNING id""",
+                (entry_id, organization_id),
             ).fetchone()
         if row is None:
-            entry = self.get_entry(organization_id, entry_id)
-            raise AccountingError(ErrorCode.JOURNAL_IMMUTABLE, f"entry {entry.id} is {entry.status} and cannot be posted")
+            raise AccountingError(ErrorCode.JOURNAL_IMMUTABLE, "journal entry could not be posted")
         return self.get_entry(organization_id, entry_id)
 
     def update_entry(self, organization_id: int, entry_id: int, *, description: str | None = None,
