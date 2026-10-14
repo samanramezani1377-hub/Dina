@@ -130,8 +130,8 @@ class _AccountingWorkspaceState extends State<AccountingWorkspace> {
       'inventory' => OperationalListPage(org: org, path: 'stock', title: 'موجودی کالا'),
       'cash-accounts' => OperationalListPage(org: org, path: 'cash-accounts', title: 'صندوق و بانک'),
       'checks' => OperationalListPage(org: org, path: 'checks', title: 'چک‌ها'),
-      'sales' => OperationalListPage(org: org, path: 'sales', title: 'فروش'),
-      'purchases' => OperationalListPage(org: org, path: 'purchases', title: 'خرید'),
+      'sales' => SalesWorkflowPage(org: org),
+      'purchases' => PurchaseWorkflowPage(org: org),
       'fiscal-years' => OperationalListPage(org: org, path: 'fiscal-years', title: 'سال مالی'),
       'invoices' => InvoicesPage(org: org, onChanged: reload),
       'payments' => PaymentsPage(org: org, onChanged: reload),
@@ -250,6 +250,244 @@ class OperationalListPage extends StatelessWidget {
   final String org,path,title;
   @override Widget build(BuildContext context)=>DataFrame(title:title,load:()=>AppScope.of(context).api.get(pathFor(org,path)));
 }
+class SalesWorkflowPage extends StatefulWidget {
+  const SalesWorkflowPage({required this.org, super.key});
+  final String org;
+
+  @override
+  State<SalesWorkflowPage> createState() => _SalesWorkflowPageState();
+}
+
+class _SalesWorkflowPageState extends State<SalesWorkflowPage> {
+  final customer = TextEditingController();
+  final invoiceNo = TextEditingController();
+  final total = TextEditingController();
+  final issueDate = TextEditingController(text: DateTime.now().toIso8601String().substring(0, 10));
+  final saleId = TextEditingController();
+  final receivableAccount = TextEditingController();
+  final revenueAccount = TextEditingController();
+  int reloadKey = 0;
+
+  Future<void> createDraft() async {
+    final customerId = int.tryParse(customer.text.trim());
+    final amount = num.tryParse(total.text.trim());
+    if (customerId == null || amount == null || amount <= 0 || invoiceNo.text.trim().isEmpty) {
+      showError(context, 'شناسه مشتری، شماره فاکتور و مبلغ معتبر را وارد کنید.');
+      return;
+    }
+    try {
+      final result = await AppScope.of(context).api.post(
+        pathFor(widget.org, 'sales'),
+        body: {
+          'customer_id': customerId,
+          'invoice_no': invoiceNo.text.trim(),
+          'issue_date': issueDate.text.trim(),
+          'lines': [
+            {
+              'description': 'فروش کالا یا خدمت',
+              'quantity': '1',
+              'unit_price': total.text.trim(),
+              'discount': '0',
+              'tax': '0',
+            },
+          ],
+        },
+      );
+      if (!mounted) return;
+      if (result?['id'] != null) saleId.text = result!['id'].toString();
+      setState(() => reloadKey++);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('پیش‌نویس فروش ثبت شد؛ برای ورود به دفتر کل آن را نهایی کنید.')));
+    } catch (error) {
+      if (mounted) showError(context, error);
+    }
+  }
+
+  Future<void> postDraft() async {
+    final id = int.tryParse(saleId.text.trim());
+    final receivableId = int.tryParse(receivableAccount.text.trim());
+    final revenueId = int.tryParse(revenueAccount.text.trim());
+    if (id == null || receivableId == null || revenueId == null) {
+      showError(context, 'شناسه فروش، حساب دریافتنی و حساب درآمد را وارد کنید.');
+      return;
+    }
+    try {
+      await AppScope.of(context).api.post(
+        pathFor(widget.org, 'sales/$id/post'),
+        body: {
+          'receivable_or_payable_account_id': receivableId,
+          'revenue_or_inventory_account_id': revenueId,
+        },
+      );
+      if (!mounted) return;
+      setState(() => reloadKey++);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فروش نهایی و سند حسابداری ثبت شد.')));
+    } catch (error) {
+      if (mounted) showError(context, error);
+    }
+  }
+
+  @override
+  void dispose() {
+    customer.dispose();
+    invoiceNo.dispose();
+    total.dispose();
+    issueDate.dispose();
+    saleId.dispose();
+    receivableAccount.dispose();
+    revenueAccount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => DataFrame(
+    key: ValueKey<int>(reloadKey),
+    title: 'فروش و فاکتورهای حسابداری',
+    load: () => AppScope.of(context).api.get(pathFor(widget.org, 'sales')),
+    create: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('۱. ثبت پیش‌نویس فروش'),
+        const SizedBox(height: 8),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          SizedBox(width: 150, child: TextField(controller: customer, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه مشتری'))),
+          SizedBox(width: 160, child: TextField(controller: invoiceNo, decoration: const InputDecoration(labelText: 'شماره فاکتور'))),
+          SizedBox(width: 150, child: TextField(controller: total, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'مبلغ کل'))),
+          SizedBox(width: 160, child: TextField(controller: issueDate, decoration: const InputDecoration(labelText: 'تاریخ صدور'))),
+          FilledButton(onPressed: createDraft, child: const Text('ثبت پیش‌نویس')),
+        ]),
+        const Divider(height: 28),
+        const Text('۲. نهایی‌سازی و ثبت در دفتر کل'),
+        const SizedBox(height: 8),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          SizedBox(width: 130, child: TextField(controller: saleId, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه فروش'))),
+          SizedBox(width: 190, child: TextField(controller: receivableAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه حساب دریافتنی'))),
+          SizedBox(width: 190, child: TextField(controller: revenueAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه حساب درآمد'))),
+          FilledButton(onPressed: postDraft, child: const Text('نهایی‌سازی فروش')),
+        ]),
+      ],
+    ),
+  );
+}
+
+class PurchaseWorkflowPage extends StatefulWidget {
+  const PurchaseWorkflowPage({required this.org, super.key});
+  final String org;
+
+  @override
+  State<PurchaseWorkflowPage> createState() => _PurchaseWorkflowPageState();
+}
+
+class _PurchaseWorkflowPageState extends State<PurchaseWorkflowPage> {
+  final supplier = TextEditingController();
+  final invoiceNo = TextEditingController();
+  final total = TextEditingController();
+  final issueDate = TextEditingController(text: DateTime.now().toIso8601String().substring(0, 10));
+  final purchaseId = TextEditingController();
+  final payableAccount = TextEditingController();
+  final expenseAccount = TextEditingController();
+  int reloadKey = 0;
+
+  Future<void> createDraft() async {
+    final supplierId = int.tryParse(supplier.text.trim());
+    final amount = num.tryParse(total.text.trim());
+    if (supplierId == null || amount == null || amount <= 0 || invoiceNo.text.trim().isEmpty) {
+      showError(context, 'شناسه تأمین‌کننده، شماره فاکتور و مبلغ معتبر را وارد کنید.');
+      return;
+    }
+    try {
+      final result = await AppScope.of(context).api.post(
+        pathFor(widget.org, 'purchases'),
+        body: {
+          'supplier_id': supplierId,
+          'invoice_no': invoiceNo.text.trim(),
+          'issue_date': issueDate.text.trim(),
+          'lines': [
+            {
+              'description': 'خرید کالا یا خدمت',
+              'quantity': '1',
+              'unit_price': total.text.trim(),
+              'discount': '0',
+              'tax': '0',
+            },
+          ],
+        },
+      );
+      if (!mounted) return;
+      if (result?['id'] != null) purchaseId.text = result!['id'].toString();
+      setState(() => reloadKey++);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('پیش‌نویس خرید ثبت شد؛ برای ورود به دفتر کل آن را نهایی کنید.')));
+    } catch (error) {
+      if (mounted) showError(context, error);
+    }
+  }
+
+  Future<void> postDraft() async {
+    final id = int.tryParse(purchaseId.text.trim());
+    final payableId = int.tryParse(payableAccount.text.trim());
+    final expenseId = int.tryParse(expenseAccount.text.trim());
+    if (id == null || payableId == null || expenseId == null) {
+      showError(context, 'شناسه خرید، حساب پرداختنی و حساب هزینه/موجودی را وارد کنید.');
+      return;
+    }
+    try {
+      await AppScope.of(context).api.post(
+        pathFor(widget.org, 'purchases/$id/post'),
+        body: {
+          'receivable_or_payable_account_id': payableId,
+          'revenue_or_inventory_account_id': expenseId,
+        },
+      );
+      if (!mounted) return;
+      setState(() => reloadKey++);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('خرید نهایی و سند حسابداری ثبت شد.')));
+    } catch (error) {
+      if (mounted) showError(context, error);
+    }
+  }
+
+  @override
+  void dispose() {
+    supplier.dispose();
+    invoiceNo.dispose();
+    total.dispose();
+    issueDate.dispose();
+    purchaseId.dispose();
+    payableAccount.dispose();
+    expenseAccount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => DataFrame(
+    key: ValueKey<int>(reloadKey),
+    title: 'خرید و فاکتورهای حسابداری',
+    load: () => AppScope.of(context).api.get(pathFor(widget.org, 'purchases')),
+    create: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('۱. ثبت پیش‌نویس خرید'),
+        const SizedBox(height: 8),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          SizedBox(width: 160, child: TextField(controller: supplier, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه تأمین‌کننده'))),
+          SizedBox(width: 160, child: TextField(controller: invoiceNo, decoration: const InputDecoration(labelText: 'شماره فاکتور'))),
+          SizedBox(width: 150, child: TextField(controller: total, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'مبلغ کل'))),
+          SizedBox(width: 160, child: TextField(controller: issueDate, decoration: const InputDecoration(labelText: 'تاریخ صدور'))),
+          FilledButton(onPressed: createDraft, child: const Text('ثبت پیش‌نویس')),
+        ]),
+        const Divider(height: 28),
+        const Text('۲. نهایی‌سازی و ثبت در دفتر کل'),
+        const SizedBox(height: 8),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          SizedBox(width: 130, child: TextField(controller: purchaseId, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه خرید'))),
+          SizedBox(width: 190, child: TextField(controller: payableAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه حساب پرداختنی'))),
+          SizedBox(width: 190, child: TextField(controller: expenseAccount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'شناسه حساب هزینه/موجودی'))),
+          FilledButton(onPressed: postDraft, child: const Text('نهایی‌سازی خرید')),
+        ]),
+      ],
+    ),
+  );
+}
+
 class CustomersPage extends StatefulWidget {
   const CustomersPage({required this.org, super.key}); final String org;
   @override State<CustomersPage> createState() => _CustomersPageState();
