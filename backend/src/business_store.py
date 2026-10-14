@@ -126,13 +126,101 @@ class BusinessStore:
     def list_customers(self, org: int):
         if self._memory: return [x for x in self._customers if x["organization_id"] == org]
         with self._connect() as conn: return conn.execute("SELECT * FROM customers WHERE organization_id=%s ORDER BY id",(org,)).fetchall()
-    def create_invoice(self, org: int, customer_id: int, number: str, total: Decimal, issue_date: date, due_date: date | None):
-        if self.customer(org, customer_id) is None: raise KeyError("customer")
+    def create_invoice(
+        self,
+        org: int,
+        customer_id: int,
+        number: str,
+        total: Decimal,
+        issue_date: date,
+        due_date: date | None,
+        receivable_account_id: int,
+        revenue_account_id: int,
+    ):
+        if total <= 0:
+            raise ValueError("invoice total must be greater than zero")
         if self._memory:
-            x={"id":self._ids["invoice"],"organization_id":org,"customer_id":customer_id,"invoice_no":number,"issue_date":issue_date,"due_date":due_date,"total":total,"paid":Decimal("0"),"status":"open"}
-            self._ids["invoice"] += 1; self._invoices.append(x); return x
+            if self.customer(org, customer_id) is None:
+                raise KeyError("customer")
+            x = {
+                "id": self._ids["invoice"],
+                "organization_id": org,
+                "customer_id": customer_id,
+                "invoice_no": number,
+                "issue_date": issue_date,
+                "due_date": due_date,
+                "total": total,
+                "paid": Decimal("0"),
+                "status": "open",
+                "receivable_account_id": receivable_account_id,
+                "revenue_account_id": revenue_account_id,
+                "journal_entry_id": None,
+            }
+            self._ids["invoice"] += 1
+            self._invoices.append(x)
+            return x
+
         with self._connect() as conn:
-            return conn.execute("INSERT INTO invoices(organization_id,customer_id,invoice_no,issue_date,due_date,total) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",(org,customer_id,number,issue_date,due_date,total)).fetchone()
+            customer = conn.execute(
+                "SELECT id FROM customers WHERE id=%s AND organization_id=%s FOR SHARE",
+                (customer_id, org),
+            ).fetchone()
+            if customer is None:
+                raise KeyError("customer")
+            accounts = conn.execute(
+                """SELECT id, account_type FROM accounts
+                   WHERE organization_id=%s AND id IN (%s,%s) FOR SHARE""",
+                (org, receivable_account_id, revenue_account_id),
+            ).fetchall()
+            by_id = {int(row["id"]): row for row in accounts}
+            if len(by_id) != 2:
+                raise KeyError("account")
+            if by_id[receivable_account_id]["account_type"] != "asset":
+                raise ValueError("receivable account must be an asset account")
+            if by_id[revenue_account_id]["account_type"] != "revenue":
+                raise ValueError("revenue account must be a revenue account")
+
+            fiscal_year = conn.execute(
+                """SELECT id FROM fiscal_years
+                   WHERE organization_id=%s AND status='open'
+                     AND starts_on<=%s AND ends_on>=%s
+                   FOR UPDATE""",
+                (org, issue_date, issue_date),
+            ).fetchone()
+            if fiscal_year is None:
+                raise ValueError("no open fiscal year covers this invoice date")
+
+            lines = [
+                JournalLine(receivable_account_id, total, Decimal("0")),
+                JournalLine(revenue_account_id, Decimal("0"), total),
+            ]
+            validate_journal(lines)
+            invoice = conn.execute(
+                """INSERT INTO invoices
+                   (organization_id,customer_id,invoice_no,issue_date,due_date,total,
+                    receivable_account_id,revenue_account_id)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                (org, customer_id, number, issue_date, due_date, total,
+                 receivable_account_id, revenue_account_id),
+            ).fetchone()
+            journal = conn.execute(
+                """INSERT INTO journal_entries
+                   (organization_id,document_no,description,status,entry_date,posted_at)
+                   VALUES(%s,%s,%s,'posted',%s,NOW()) RETURNING id""",
+                (org, f"INV-{number}", f"Invoice {number}", issue_date),
+            ).fetchone()
+            journal_id = int(journal["id"])
+            for line in lines:
+                conn.execute(
+                    """INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit)
+                       VALUES(%s,%s,%s,%s)""",
+                    (journal_id, line.account_id, line.debit, line.credit),
+                )
+            return conn.execute(
+                """UPDATE invoices SET journal_entry_id=%s
+                   WHERE id=%s AND organization_id=%s RETURNING *""",
+                (journal_id, invoice["id"], org),
+            ).fetchone()
     def list_invoices(self, org: int):
         if self._memory: return [x for x in self._invoices if x["organization_id"] == org]
         with self._connect() as conn: return conn.execute("SELECT * FROM invoices WHERE organization_id=%s ORDER BY id",(org,)).fetchall()
