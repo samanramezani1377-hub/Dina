@@ -211,20 +211,30 @@ def sales_summary(
     caller: Caller = Depends(require_accounting_caller),
 ):
     _check_date_range(date_from, date_to)
-    params: list[object] = [organization_id]
-    where = ["organization_id = %s", "status = 'posted'"]
+    params: list[object] = [organization_id, organization_id]
+    where: list[str] = []
     if date_from is not None:
         where.append("issue_date >= %s")
         params.append(date_from)
     if date_to is not None:
         where.append("issue_date <= %s")
         params.append(date_to)
+    date_filter = (" WHERE " + " AND ".join(where)) if where else ""
     result = rows(
         request,
         """SELECT COUNT(*) AS documents, COALESCE(SUM(subtotal), 0) AS subtotal,
                   COALESCE(SUM(discount), 0) AS discount, COALESCE(SUM(tax), 0) AS tax,
                   COALESCE(SUM(total), 0) AS total
-           FROM sales WHERE """ + " AND ".join(where),
+           FROM (
+             SELECT issue_date,subtotal,discount,tax,total
+               FROM sales WHERE organization_id=%s AND status='posted'
+             UNION ALL
+             SELECT issue_date,total AS subtotal,0::numeric AS discount,
+                    0::numeric AS tax,total
+               FROM invoices
+              WHERE organization_id=%s AND journal_entry_id IS NOT NULL
+                AND status IN ('open','partial','paid')
+           ) AS posted_sales""" + date_filter,
         params,
     )
     return dict(result[0])
