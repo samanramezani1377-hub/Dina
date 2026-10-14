@@ -183,6 +183,19 @@ class PostgresStore:
         try:
             validate_journal(lines)
             with self._connect() as conn:
+                if status != DRAFT:
+                    fiscal_year = conn.execute(
+                        """SELECT id FROM fiscal_years
+                           WHERE organization_id=%s AND status='open'
+                             AND starts_on<=%s AND ends_on>=%s
+                           FOR UPDATE""",
+                        (organization_id, entry_date, entry_date),
+                    ).fetchone()
+                    if fiscal_year is None:
+                        raise AccountingError(
+                            ErrorCode.VALIDATION_ERROR,
+                            "no open fiscal year covers this journal entry date",
+                        )
                 for line in lines:
                     account = conn.execute(
                         "SELECT 1 FROM accounts WHERE id=%s AND organization_id=%s",
