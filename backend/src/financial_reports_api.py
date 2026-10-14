@@ -188,6 +188,7 @@ def inventory_report(
         request,
         """SELECT sm.warehouse_id, sm.product_id, p.name AS product_name,
                   w.name AS warehouse_name, COALESCE(SUM(sm.quantity), 0) AS quantity,
+                  COALESCE(SUM(sm.quantity * sm.unit_cost), 0) AS stock_value,
                   COALESCE(SUM(CASE WHEN sm.quantity > 0
                     THEN sm.quantity * sm.unit_cost ELSE 0 END), 0) AS received_value
            FROM stock_movements AS sm
