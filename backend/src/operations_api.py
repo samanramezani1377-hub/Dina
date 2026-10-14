@@ -122,12 +122,11 @@ def add_member(organization_id: int, member_user_id: int, role: str, request: Re
         raise ApiError(ErrorCode.VALIDATION_ERROR, "invalid role")
     memberships = request.app.state.memberships
     target_role = memberships.user_role(member_user_id, organization_id)
-    # A manager must not be able to overwrite or demote an owner's membership.
-    if target_role == "owner" and caller.role != "owner":
-        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can modify another owner's membership")
-    # Only an existing owner may grant ownership.
-    if role == "owner" and caller.role != "owner":
-        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can grant owner role")
+    # Only an owner may modify an owner/manager or grant a management role.
+    if target_role in {"owner", "manager"} and caller.role != "owner":
+        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can modify an owner or manager")
+    if role in {"owner", "manager"} and caller.role != "owner":
+        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can grant an owner or manager role")
     if target_role == "owner" and role != "owner" and memberships.owner_count(organization_id) <= 1:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "cannot demote the last organization owner")
     try:
@@ -146,6 +145,8 @@ def remove_member(organization_id: int, member_user_id: int, request: Request,
     target_role = memberships.user_role(member_user_id, organization_id)
     if target_role is None:
         raise ApiError(ErrorCode.NOT_FOUND, "membership not found")
+    if target_role in {"owner", "manager"} and caller.role != "owner":
+        raise ApiError(ErrorCode.PERMISSION_DENIED, "only an owner can remove an owner or manager")
     if target_role == "owner":
         owner_count = memberships.owner_count(organization_id)
         if owner_count <= 1:
