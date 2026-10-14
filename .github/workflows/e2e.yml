@@ -144,6 +144,13 @@ jobs:
         env:
           DINA_BASE_URL: ${{ env.DINA_BASE_URL }}
 
+      - name: Run real accounting HTTP E2E
+        run: python scripts/e2e_staging.py
+        env:
+          DINA_API_BASE_URL: ${{ env.DINA_BASE_URL }}
+          DINA_E2E_EMAIL: ${{ vars.STAGING_TEST_EMAIL }}
+          DINA_E2E_PASSWORD: ${{ secrets.STAGING_TEST_PASSWORD }}
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
