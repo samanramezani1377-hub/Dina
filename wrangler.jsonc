@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dina-api-free-test",
+  "main": "backend/worker.py",
+  "compatibility_date": "2026-11-26",
+  "compatibility_flags": ["python_workers"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "00000000000000000000000000000000",
+      "localConnectionString": "postgresql://dina:dina@127.0.0.1:5432/dina_test"
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "JWT_ALGORITHM": "HS256",
+    "JWT_EXPIRE_MINUTES": "60",
+    "ZARINPAL_SANDBOX": "true",
+    "ZARINPAL_TIMEOUT_SECONDS": "15"
+  }
+}
