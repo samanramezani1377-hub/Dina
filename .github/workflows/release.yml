@@ -1,16 +1,37 @@
 name: Signed release artifacts
+
 on:
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing release tag to build and publish (for example v1.0.0)
+        required: true
+        type: string
   push:
     tags: ["v*"]
+
+permissions:
+  contents: write
+
 jobs:
   android:
     runs-on: ubuntu-latest
-    permissions: {contents: write}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
       - uses: subosito/flutter-action@v2
-        with: {flutter-version: "3.24.5", channel: stable}
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+          cache: true
+          pub-cache: true
+      - name: Generate Android platform files
+        working-directory: app
+        run: flutter create . --platforms=android --project-name dina_app
+      - name: Get packages
+        working-directory: app
+        run: flutter pub get
       - name: Configure Android signing
         working-directory: app
         env:
@@ -19,6 +40,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
         run: |
+          set -euo pipefail
           test -n "$ANDROID_KEYSTORE_B64"
           mkdir -p android/app
           echo "$ANDROID_KEYSTORE_B64" | base64 --decode > android/app/release.jks
@@ -31,28 +53,67 @@ jobs:
       - name: Build signed APK
         working-directory: app
         run: flutter build apk --release
+      - name: Verify signed APK
+        working-directory: app
+        run: test -s build/app/outputs/flutter-apk/app-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: dina-android-signed
           path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
       - name: Publish Android asset
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag_name || github.ref_name }}
           files: app/build/app/outputs/flutter-apk/app-release.apk
+
   windows:
     runs-on: windows-2022
-    permissions: {contents: write}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
       - uses: subosito/flutter-action@v2
-        with: {flutter-version: "3.24.5", channel: stable}
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+          cache: true
+          pub-cache: true
+      - name: Generate Windows platform files
+        working-directory: app
+        run: flutter create . --platforms=windows --project-name dina_app
+      - name: Get packages
+        working-directory: app
+        run: flutter pub get
       - name: Build Windows
         working-directory: app
         run: flutter build windows --release
       - name: Package Windows
         shell: pwsh
         working-directory: app
-        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dina-windows.zip
-      - uses: softprops/action-gh-release@v2
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = 'build/windows/x64/runner/Release'
+          $exe = Join-Path $releaseDir 'dina_app.exe'
+          if (-not (Test-Path $exe)) {
+            throw "Expected Windows executable was not produced at $exe"
+          }
+          $zip = 'build/windows/dina-windows-x64.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zip -CompressionLevel Optimal
+          if (-not (Test-Path $zip)) {
+            throw "Windows ZIP package was not produced at $zip"
+          }
+          Get-Item $exe, $zip | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
         with:
-          files: app/dina-windows.zip
+          name: dina-windows-x64
+          path: app/build/windows/dina-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish Windows asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name || github.ref_name }}
+          files: app/build/windows/dina-windows-x64.zip
