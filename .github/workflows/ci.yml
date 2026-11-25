@@ -46,18 +46,12 @@ jobs:
           set -euo pipefail
           for f in database/migrations/*.sql; do
             echo "Applying $f"
-            psql -v ON_ERROR_STOP=1 \\
-              --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \\
-              --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \\
-              --file "$f"
+            psql -v ON_ERROR_STOP=1  --host "$POSTGRES_HOST" --port "$POSTGRES_PORT"  --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"  --file "$f"
           done
       - name: Verify the audit table exists
         run: |
           set -euo pipefail
-          psql -v ON_ERROR_STOP=1 \\
-            --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \\
-            --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \\
-            --command "SELECT count(*) FROM audit_logs"
+          psql -v ON_ERROR_STOP=1  --host "$POSTGRES_HOST" --port "$POSTGRES_PORT"  --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"  --command "SELECT count(*) FROM audit_logs"
       - run: pytest -q backend/tests
 
   cloudflare-worker:
