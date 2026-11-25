@@ -14,7 +14,7 @@ concurrency:
 jobs:
   deploy:
     name: Migrate test DB and deploy Worker
-    if: github.ref == 'refs/heads/cloudflare-free-test'
+    if: github.ref == 'refs/heads/cloudflare-free-test' && vars.DINA_CLOUDFLARE_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
