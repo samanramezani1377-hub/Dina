@@ -2,7 +2,7 @@ name: Dina CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, cloudflare-free-test]
   # Run on PRs targeting feature branches too, not only main.
   pull_request:
 
@@ -46,27 +46,38 @@ jobs:
           set -euo pipefail
           for f in database/migrations/*.sql; do
             echo "Applying $f"
-            psql -v ON_ERROR_STOP=1 \
-              --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \
-              --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+            psql -v ON_ERROR_STOP=1 \\
+              --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \\
+              --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \\
               --file "$f"
           done
       - name: Verify the audit table exists
         run: |
           set -euo pipefail
-          psql -v ON_ERROR_STOP=1 \
-            --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \
-            --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+          psql -v ON_ERROR_STOP=1 \\
+            --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \\
+            --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \\
             --command "SELECT count(*) FROM audit_logs"
       - run: pytest -q backend/tests
+
+  cloudflare-worker:
+    name: Cloudflare Workers Free compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Validate Python Worker bundle without deploying
+        run: |
+          uv sync --group dev
+          uv run pywrangler deploy --dry-run
 
   flutter-lint-test-apk:
     name: Flutter lint, test and Android APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Flutter 3.24.5 generates an Android Gradle 8.3 project.
-      # Gradle 8.3 is incompatible with the runner's default Java 25.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -138,7 +149,7 @@ jobs:
       - name: Report detected Visual Studio installations
         shell: pwsh
         run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\\Installer\\vswhere.exe'
           & $vswhere -format json -products * -all -utf8
       - name: Generate Windows platform files
         working-directory: app
@@ -156,15 +167,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $releaseDir = 'build/windows/x64/runner/Release'
           $exe = Join-Path $releaseDir 'dina_app.exe'
-          if (-not (Test-Path $exe)) {
-            throw "Expected Windows executable was not produced at $exe"
-          }
+          if (-not (Test-Path $exe)) { throw "Expected Windows executable was not produced at $exe" }
           $zip = 'build/windows/dina-windows-x64.zip'
           if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zip -CompressionLevel Optimal
-          if (-not (Test-Path $zip)) {
-            throw "Windows ZIP package was not produced at $zip"
-          }
+          if (-not (Test-Path $zip)) { throw "Windows ZIP package was not produced at $zip" }
           Get-Item $exe, $zip | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with:
