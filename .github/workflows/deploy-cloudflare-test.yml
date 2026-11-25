@@ -1,0 +1,117 @@
+name: Deploy Dina API to Cloudflare (test only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dina-cloudflare-free-test-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Migrate test DB and deploy Worker
+    if: github.ref == 'refs/heads/cloudflare-free-test'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      HYPERDRIVE_ID: ${{ vars.DINA_TEST_HYPERDRIVE_ID }}
+      DINA_TEST_DATABASE_URL: ${{ secrets.DINA_TEST_DATABASE_URL }}
+      DINA_WORKER_SECRET_KEY: ${{ secrets.DINA_WORKER_SECRET_KEY }}
+      DINA_PAYMENT_WEBHOOK_SECRET: ${{ secrets.DINA_PAYMENT_WEBHOOK_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cloudflare-free-test
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID HYPERDRIVE_ID DINA_TEST_DATABASE_URL DINA_WORKER_SECRET_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub variable/secret: $name"
+              exit 1
+            fi
+          done
+          if [ "$HYPERDRIVE_ID" = "00000000000000000000000000000000" ]; then
+            echo "::error::Replace the placeholder Hyperdrive ID before deploying."
+            exit 1
+          fi
+          if [ "${#DINA_WORKER_SECRET_KEY}" -lt 32 ]; then
+            echo "::error::DINA_WORKER_SECRET_KEY must be at least 32 characters."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install PostgreSQL driver for migrations
+        run: python -m pip install "psycopg[binary]==3.2.3"
+
+      - name: Apply migrations to the dedicated test database
+        env:
+          DATABASE_URL: ${{ secrets.DINA_TEST_DATABASE_URL }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import psycopg
+
+          url = os.environ["DATABASE_URL"]
+          migrations = sorted(Path("database/migrations").glob("*.sql"))
+          if not migrations:
+              raise SystemExit("No database migrations found")
+          with psycopg.connect(url, autocommit=True) as conn:
+              for migration in migrations:
+                  print(f"Applying {migration}")
+                  conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
+          print(f"Applied {len(migrations)} migration files to the configured test database.")
+          PY
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Inject the configured Hyperdrive ID
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("wrangler.jsonc")
+          content = path.read_text(encoding="utf-8")
+          placeholder = "00000000000000000000000000000000"
+          hyperdrive_id = os.environ["HYPERDRIVE_ID"]
+          if placeholder not in content:
+              raise SystemExit("Expected Hyperdrive placeholder was not found")
+          path.write_text(content.replace(placeholder, hyperdrive_id), encoding="utf-8")
+          PY
+
+      - name: Install Worker dependencies
+        run: uv sync --group dev
+
+      - name: Upload Worker secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$DINA_WORKER_SECRET_KEY" | npx --yes wrangler@4 secret put SECRET_KEY --name dina-api-free-test
+          if [ -n "$DINA_PAYMENT_WEBHOOK_SECRET" ]; then
+            printf '%s' "$DINA_PAYMENT_WEBHOOK_SECRET" | npx --yes wrangler@4 secret put PAYMENT_WEBHOOK_SECRET --name dina-api-free-test
+          fi
+
+      - name: Deploy to Cloudflare Workers
+        run: uv run pywrangler deploy
+
+      - name: Report deployment endpoint
+        run: |
+          echo "Worker deployment requested: https://dina-api-free-test.${CLOUDFLARE_ACCOUNT_ID}.workers.dev"
