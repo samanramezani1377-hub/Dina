@@ -8,6 +8,14 @@ from functools import lru_cache
 from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Cloudflare Workers exposes vars and secrets through its runtime env binding,
+# not through the operating system environment. Keep the import optional so
+# this module continues to work under local Uvicorn and pytest.
+try:
+    from workers import env as _cloudflare_env
+except ImportError:  # pragma: no cover - exercised outside Workers
+    _cloudflare_env = None
+
 TEST_ENVIRONMENTS = frozenset({"test", "testing"})
 MIN_SECRET_KEY_LENGTH = 32
 PLACEHOLDER_SECRET_KEYS = frozenset({"replace-me-with-a-long-random-value"})
@@ -98,7 +106,32 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    if _cloudflare_env is None:
+        return Settings()
+
+    # Prefer Hyperdrive's pooled PostgreSQL connection string. A plain
+    # DATABASE_URL secret is also accepted for diagnostic deployments.
+    database_url = getattr(_cloudflare_env, "DATABASE_URL", "")
+    if not database_url:
+        hyperdrive = getattr(_cloudflare_env, "HYPERDRIVE", None)
+        database_url = getattr(hyperdrive, "connection_string", "")
+
+    if not database_url:
+        raise ConfigurationError(
+            "Cloudflare Worker requires a HYPERDRIVE binding or DATABASE_URL secret"
+        )
+
+    return Settings(
+        environment=getattr(_cloudflare_env, "ENVIRONMENT", "production"),
+        secret_key=getattr(_cloudflare_env, "SECRET_KEY", ""),
+        jwt_algorithm=getattr(_cloudflare_env, "JWT_ALGORITHM", "HS256"),
+        jwt_expire_minutes=getattr(_cloudflare_env, "JWT_EXPIRE_MINUTES", 60),
+        database_url=database_url,
+        zarinpal_merchant_id=getattr(_cloudflare_env, "ZARINPAL_MERCHANT_ID", ""),
+        zarinpal_callback_url=getattr(_cloudflare_env, "ZARINPAL_CALLBACK_URL", ""),
+        zarinpal_sandbox=getattr(_cloudflare_env, "ZARINPAL_SANDBOX", False),
+        zarinpal_timeout_seconds=getattr(_cloudflare_env, "ZARINPAL_TIMEOUT_SECONDS", 15),
+    )
 
 
 def reset_settings_cache() -> None:
