@@ -77,10 +77,10 @@ Never reuse the production `SECRET_KEY`.
 
 ### 5. Deploy from the feature branch
 
-The repository includes a manual-only workflow:
+The repository includes a deployment workflow:
 `.github/workflows/deploy-cloudflare-test.yml`.
 
-In GitHub, open **Actions → Deploy Dina API to Cloudflare (test only) → Run workflow**, select `cloudflare-free-test`, and run it.
+After all variables and secrets above are configured, push a commit to `cloudflare-free-test`. The workflow automatically deploys from this branch only.
 
 The workflow:
 - refuses to run from any branch other than `cloudflare-free-test`;
@@ -89,7 +89,7 @@ The workflow:
 - uploads the test-only Worker secrets;
 - deploys the Python Worker.
 
-The workflow is manual-only. It does not deploy on every push.
+The workflow is not enabled on `main` and never deploys production. Each push to this isolated test branch redeploys the test Worker.
 
 ### 6. Verify and connect the Android app
 
