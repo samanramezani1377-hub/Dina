@@ -42,6 +42,8 @@ Requirements: a Cloudflare account on the Free Workers plan, Node.js/npm, uv, Wr
    ```bash
    python -c "import secrets; print(secrets.token_urlsafe(48))"
    npx wrangler secret put SECRET_KEY
+   # Optional: only if payment webhooks are part of this test
+   npx wrangler secret put PAYMENT_WEBHOOK_SECRET
    ```
 
 5. Install and deploy from the repository root:
