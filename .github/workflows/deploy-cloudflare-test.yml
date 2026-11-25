@@ -112,6 +112,5 @@ jobs:
       - name: Deploy to Cloudflare Workers
         run: uv run pywrangler deploy
 
-      - name: Report deployment endpoint
-        run: |
-          echo "Worker deployment requested: https://dina-api-free-test.${CLOUDFLARE_ACCOUNT_ID}.workers.dev"
+      - name: Verify deployment command completed
+        run: echo "Cloudflare accepted the deployment. Use the workers.dev URL printed by Wrangler above."
