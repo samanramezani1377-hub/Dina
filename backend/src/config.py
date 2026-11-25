@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256")
     jwt_expire_minutes: int = Field(default=60, ge=1, le=60 * 24 * 30)
     database_url: str = Field(default="postgresql+psycopg://dina@localhost:5432/dina")
+    payment_webhook_secret: SecretStr = Field(default=SecretStr(""))
     zarinpal_merchant_id: str = Field(default="")
     zarinpal_callback_url: str = Field(default="")
     zarinpal_sandbox: bool = Field(default=False)
@@ -127,6 +128,7 @@ def get_settings() -> Settings:
         jwt_algorithm=getattr(_cloudflare_env, "JWT_ALGORITHM", "HS256"),
         jwt_expire_minutes=getattr(_cloudflare_env, "JWT_EXPIRE_MINUTES", 60),
         database_url=database_url,
+        payment_webhook_secret=getattr(_cloudflare_env, "PAYMENT_WEBHOOK_SECRET", ""),
         zarinpal_merchant_id=getattr(_cloudflare_env, "ZARINPAL_MERCHANT_ID", ""),
         zarinpal_callback_url=getattr(_cloudflare_env, "ZARINPAL_CALLBACK_URL", ""),
         zarinpal_sandbox=getattr(_cloudflare_env, "ZARINPAL_SANDBOX", False),
