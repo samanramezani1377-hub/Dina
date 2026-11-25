@@ -1,66 +1,110 @@
 # Dina on Cloudflare Workers Free (test branch)
 
-This deployment target is isolated to the `cloudflare-free-test` branch. It does not change the production `main` branch or its hosting configuration.
+This deployment target is isolated to `cloudflare-free-test`. It does not change `main`, the production API, or production data.
 
-## What runs where
+## Architecture
 
-- The existing FastAPI application in `backend/src/main.py` runs on Cloudflare Python Workers through its ASGI adapter.
-- PostgreSQL remains PostgreSQL. Create a separate **test database** with a provider that accepts remote connections, then connect it through a Cloudflare Hyperdrive binding.
-- Cloudflare Workers Free is the compute target. Hyperdrive is used for connection pooling; it does not move PostgreSQL data into Cloudflare.
+- The existing FastAPI application in `backend/src/main.py` runs on Cloudflare Python Workers using Cloudflare's ASGI adapter.
+- PostgreSQL remains an external PostgreSQL service. Cloudflare Hyperdrive provides pooled connections; it does not host or replace PostgreSQL.
+- Use a separate, disposable test database. Never point this Worker at production.
 - The Flutter app can use the deployed Worker URL as `API_BASE_URL`.
 
-## Free-plan constraints that affect Dina
+## Free services
 
-Cloudflare Workers Free currently allows 100,000 requests/day but only **10 ms CPU time per request** and 128 MB memory. Database/network wait time does not count as CPU time.
+A practical $0 test setup is:
 
-Dina's existing password policy uses Argon2id with 64 MiB memory, time cost 3 and parallelism 4. Registration/login and password verification are CPU-intensive and are expected to exceed the Free CPU budget. Do not weaken the password policy just to make these requests fit. Consequently this free deployment is suitable first for health checks and light API-path compatibility tests; full authentication and full-app acceptance testing are not guaranteed on Free.
+1. **Cloudflare Workers Free** for the FastAPI compute.
+2. **Neon Free** for a disposable PostgreSQL project/database.
+3. **Cloudflare Hyperdrive Free** to connect the Worker to PostgreSQL.
 
-The PDF export path imports ReportLab lazily. ReportLab is not included in the standard Pyodide package set used by this Worker, so PDF export must be treated as unsupported until a compatible PyEmscripten build or a separate export service is provided. CSV and XLSX paths are separate.
+Neon's current Free plan includes 100 CU-hours and 1 GB PostgreSQL storage per project. It scales to zero after five minutes idle. See [Neon Free plan limits](https://neon.com/docs/introduction/free-tier) and [Neon pricing](https://neon.com/pricing).
+
+Cloudflare Workers Free currently allows 100,000 requests/day, 128 MB memory, and 10 ms CPU per HTTP request. Hyperdrive Free includes 100,000 database queries/day. These are usage limits, not a guarantee that every Dina route fits the CPU budget. See [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [Hyperdrive pricing](https://developers.cloudflare.com/hyperdrive/platform/pricing/).
+
+**Important application limitation:** Dina uses Argon2id password hashing with a deliberately strong memory/time cost. Registration and login are CPU-intensive and are likely to exceed the Workers Free 10 ms CPU budget. Do not weaken password hashing to make the free tier pass. Start with health/readiness and light API compatibility tests. Full authentication and end-to-end testing may require a higher CPU allowance or a different free compute host.
+
+The PDF export path imports ReportLab lazily. ReportLab is not included in the standard Python Worker package set used here, so PDF export is not considered supported on this target until separately verified. Do not assume every existing backend route is production-ready on Workers.
 
 ## One-time setup
 
-Requirements: a Cloudflare account on the Free Workers plan, Node.js/npm, uv, Wrangler/Pywrangler, and a **dedicated disposable PostgreSQL test database**. Never connect this test Worker to production data.
+### 1. Create a disposable PostgreSQL database
 
-1. Create a PostgreSQL database/schema for testing and apply every migration in order:
+Create a project on [Neon](https://console.neon.tech/) using its Free plan. Create/use a dedicated test database and copy its direct PostgreSQL connection string (not a production database URL).
 
-   ```bash
-   for f in database/migrations/*.sql; do
-     psql "$DINA_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
-   done
-   ```
+Do not put the database URL in Git, a source file, or this chat.
 
-2. Create the Hyperdrive configuration (use the test database URL, not production):
+### 2. Create a Cloudflare Hyperdrive configuration
 
-   ```bash
-   npx wrangler hyperdrive create dina-test --connection-string="$DINA_TEST_DATABASE_URL"
-   ```
+In a terminal with Wrangler authenticated to your Cloudflare account, create Hyperdrive using the Neon test connection string:
 
-3. Replace the placeholder `hyperdrive[0].id` in `wrangler.jsonc` with the returned ID.
+```bash
+npx wrangler@4 hyperdrive create dina-api-free-test --connection-string="$DINA_TEST_DATABASE_URL"
+```
 
-4. Set a new random production-format signing secret in the Worker secret store:
+Save the returned Hyperdrive ID. Hyperdrive must point to the same test database whose direct URL will be used for migrations.
 
-   ```bash
-   python -c "import secrets; print(secrets.token_urlsafe(48))"
-   npx wrangler secret put SECRET_KEY
-   # Optional: only if payment webhooks are part of this test
-   npx wrangler secret put PAYMENT_WEBHOOK_SECRET
-   ```
+### 3. Create a Cloudflare API token
 
-5. Install and deploy from the repository root:
+Create a token scoped to the target Cloudflare account with permission to deploy/edit Workers scripts. Do not use a Global API Key. Keep the token private.
 
-   ```bash
-   uv sync --group dev
-   uv run pywrangler deploy
-   ```
+### 4. Add GitHub Actions variables and secrets
 
-6. Test the returned `https://dina-api-free-test.<account>.workers.dev/health` and `/health/ready` endpoints. The latter confirms the test database connection.
+In GitHub, open **Settings → Secrets and variables → Actions** for this repository.
 
-7. Build the Android app against the deployed URL:
+Add these **repository variables**:
 
-   ```bash
-   cd app
-   flutter build apk --debug --dart-define=API_BASE_URL=https://dina-api-free-test.<account>.workers.dev
-   ```
+| Variable | Value |
+|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
+| `DINA_TEST_HYPERDRIVE_ID` | Hyperdrive ID returned in step 2 |
+
+Add these **repository secrets**:
+
+| Secret | Value |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token from step 3 |
+| `DINA_TEST_DATABASE_URL` | Direct Neon test database URL from step 1 |
+| `DINA_WORKER_SECRET_KEY` | A new random secret of at least 32 characters, used only by this test Worker |
+| `DINA_PAYMENT_WEBHOOK_SECRET` | Optional; only needed to test payment webhook signature validation |
+
+Generate the Worker signing secret locally with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Never reuse the production `SECRET_KEY`.
+
+### 5. Deploy from the feature branch
+
+The repository includes a manual-only workflow:
+`.github/workflows/deploy-cloudflare-test.yml`.
+
+In GitHub, open **Actions → Deploy Dina API to Cloudflare (test only) → Run workflow**, select `cloudflare-free-test`, and run it.
+
+The workflow:
+- refuses to run from any branch other than `cloudflare-free-test`;
+- applies the existing SQL migration files to the dedicated test database;
+- injects the Hyperdrive ID into the deployment config without committing it;
+- uploads the test-only Worker secrets;
+- deploys the Python Worker.
+
+The workflow is manual-only. It does not deploy on every push.
+
+### 6. Verify and connect the Android app
+
+Use the `workers.dev` URL printed by Wrangler in the deployment logs. Test:
+
+- `/health` — Worker responds.
+- `/health/ready` — Worker can reach the test PostgreSQL database.
+- Then build the Android app with the deployed URL:
+
+```bash
+cd app
+flutter build apk --debug --dart-define=API_BASE_URL=https://YOUR-WORKER-HOST.workers.dev
+```
+
+Replace the example host with the exact URL printed by Wrangler. The app already appends `/api/v1` to the configured base URL.
 
 ## Local Worker preview
 
@@ -71,8 +115,10 @@ uv sync --group dev
 uv run pywrangler dev
 ```
 
-Set a local `SECRET_KEY` through Wrangler's local secrets mechanism before using protected endpoints. The Cloudflare production secret is not copied into the repository.
+Set a local `SECRET_KEY` through Wrangler's local secrets mechanism before using protected endpoints.
 
-## CI validation
+## CI validation versus live deployment
 
-The `Cloudflare Workers Free compatibility` job runs `pywrangler deploy --dry-run`. This validates dependency packaging and Worker bundling without deploying or requiring Cloudflare credentials. A successful dry-run is not a live deployment and does not prove that the external PostgreSQL provider, Hyperdrive configuration, or Free CPU budget will work for every API route.
+The `Cloudflare Workers Free compatibility` CI job runs `pywrangler deploy --dry-run`. This validates dependency packaging and Worker bundling without publishing anything. A successful dry-run is not a live deployment and does not prove that the configured external PostgreSQL provider, Hyperdrive connection, or Free CPU budget will work for every API route.
+
+The live deployment workflow only runs after the GitHub variables and secrets above have been configured.
