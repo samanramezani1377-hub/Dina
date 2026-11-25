@@ -1,7 +1,8 @@
 name: Deploy Dina API to Cloudflare (test only)
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [cloudflare-free-test]
 
 permissions:
   contents: read
