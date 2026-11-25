@@ -1,9 +1,9 @@
 name: Dina PostgreSQL backup
 
+# DISABLED: this workflow is intentionally not scheduled or manually runnable.
+# It can only run if another workflow explicitly calls it via workflow_call.
 on:
-  schedule:
-    - cron: "17 2 * * *"
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
