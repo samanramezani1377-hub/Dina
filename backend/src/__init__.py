@@ -1,0 +1,1 @@
+"""Dina FastAPI application package."""
