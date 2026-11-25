@@ -57,6 +57,7 @@ Add these **repository variables**:
 |---|---|
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
 | `DINA_TEST_HYPERDRIVE_ID` | Hyperdrive ID returned in step 2 |
+| `DINA_CLOUDFLARE_DEPLOY_ENABLED` | Set to `true` only after all secrets and variables are ready |
 
 Add these **repository secrets**:
 
@@ -80,7 +81,7 @@ Never reuse the production `SECRET_KEY`.
 The repository includes a deployment workflow:
 `.github/workflows/deploy-cloudflare-test.yml`.
 
-After all variables and secrets above are configured, push a commit to `cloudflare-free-test`. The workflow automatically deploys from this branch only.
+After all variables and secrets above are configured, set `DINA_CLOUDFLARE_DEPLOY_ENABLED=true`, then push a commit to `cloudflare-free-test`. The workflow automatically deploys from this branch only. Until that opt-in variable is set, deployment is skipped.
 
 The workflow:
 - refuses to run from any branch other than `cloudflare-free-test`;
