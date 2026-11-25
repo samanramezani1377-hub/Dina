@@ -3,20 +3,13 @@ name: Dina CI
 on:
   push:
     branches: [main]
-  # No branch filter: convoy pull requests target the feature branch, not main.
-  # With `branches: [main]` they never triggered this workflow at all, so a red
-  # Flutter job could reach the feature branch unverified.
+  # Run on PRs targeting feature branches too, not only main.
   pull_request:
 
 jobs:
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
-    # The audit trail is the one component with a real database behind it, and
-    # its append-only guarantee is enforced by the database itself (a trigger
-    # plus REVOKEs), not by application code. That guarantee cannot be checked
-    # against a fake connection: a FakeConn cannot reject an UPDATE. So this job
-    # runs a real PostgreSQL service and the integration tests talk to it.
     services:
       postgres:
         image: postgres:16
@@ -26,34 +19,18 @@ jobs:
           POSTGRES_DB: dina_test
         ports:
           - 5432:5432
-        # --healthcheck, not a fixed sleep: the steps below must not race the
-        # server's startup. Without it the suite intermittently fails to connect
-        # on a cold runner, which is a flaky red that hides real failures.
         options: >-
           --health-cmd pg_isready
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      # Credentials for the throwaway CI database above. These are not secrets:
-      # the database exists only for the lifetime of this job on an ephemeral
-      # runner, and nothing outside this workflow can reach it.
       POSTGRES_HOST: localhost
       POSTGRES_PORT: '5432'
       POSTGRES_USER: dina
       POSTGRES_PASSWORD: dina
       POSTGRES_DB: dina_test
-      # psql does NOT read POSTGRES_PASSWORD; it authenticates with PGPASSWORD,
-      # a .pgpass file or a peer/trust socket. Setting only the former made the
-      # first psql call fail with "fe_sendauth: no password supplied" on run
-      # 36863404514, so the two are kept in step deliberately rather than by
-      # accident. Exporting it once here covers every psql call below, including
-      # any added later.
       PGPASSWORD: dina
-      # Read by backend/tests/test_audit_postgres.py, which is the whole reason
-      # the service container exists. An integration test that silently skipped
-      # here would report the audit trail as covered while testing nothing, so
-      # the test fails instead of skipping when this is absent.
       DATABASE_URL: postgresql://dina:dina@localhost:5432/dina_test
     steps:
       - uses: actions/checkout@v4
@@ -64,19 +41,6 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: python -m pip install --upgrade pip
       - run: pip install -r backend/requirements.txt
-      # No env: block here on purpose. Tests run as the "test" environment --
-      # only then is a missing SECRET_KEY tolerated (an ephemeral per-process
-      # key is generated) -- and that ENVIRONMENT=test is set by the
-      # session-scoped autouse fixture in backend/tests/conftest.py, not by the
-      # job. An `env:` block would be a second, redundant source of truth that
-      # a future test run no longer needs, and nothing in the job verifies it.
-      # With the fixture, booting the app in a test genuinely exercises the
-      # fail-fast startup gate in src/main.py. No real secret is ever set or
-      # committed.
-      #
-      # Applied in filename order, which is what makes 002_audit_logs.sql able
-      # to attach its foreign keys conditionally: it checks for the tables the
-      # earlier migrations create.
       - name: Apply database migrations
         run: |
           set -euo pipefail
@@ -94,18 +58,8 @@ jobs:
             --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \
             --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
             --command "SELECT count(*) FROM audit_logs"
-      # backend/tests is the whole backend suite, including the accounting
-      # domain matrix in test_accounting_matrix.py and the real-PostgreSQL
-      # audit integration tests. The top-level tests/ directory held exactly one
-      # file, which asserted that two hardcoded lists of Decimal summed equally
-      # -- it exercised sum(), not this application -- and was removed rather
-      # than left running alongside the real tests.
-      #
-      # No -m marker and no --ignore: everything in backend/tests runs here.
       - run: pytest -q backend/tests
 
-  # Analyze, test and Android build all run on Linux. The Windows desktop build
-  # is a separate job because it can only be produced by a Windows runner.
   flutter-lint-test-apk:
     name: Flutter lint, test and Android APK
     runs-on: ubuntu-latest
@@ -117,11 +71,6 @@ jobs:
           channel: stable
           cache: true
           pub-cache: true
-      # `flutter create` is used only to materialise the android/ scaffolding
-      # (gradle wrapper, manifest, MainActivity) that the build needs. It runs
-      # without --overwrite, so it only recreates *missing* files and never
-      # touches the committed lib/ or test/ sources. Regenerating the project in
-      # place is what produced the `MyApp` analyze failure in run 36775154759.
       - name: Generate Android platform files
         working-directory: app
         run: flutter create . --platforms=android --project-name dina_app
@@ -134,7 +83,6 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('app/android/**/gradle-wrapper.properties', 'app/android/**/build.gradle*', 'app/android/**/settings.gradle*', 'app/pubspec.lock') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
-
       - name: Get packages
         working-directory: app
         run: flutter pub get
@@ -147,8 +95,6 @@ jobs:
       - name: Build Android APK
         working-directory: app
         run: flutter build apk --release
-      # A build step that "succeeds" without producing a binary must not be
-      # reported as green.
       - name: Verify APK artifact exists
         working-directory: app
         run: |
@@ -158,25 +104,16 @@ jobs:
             echo "Expected APK was not produced at $apk" >&2
             exit 1
           fi
-          ls -l "$apk"
+          ls -lh "$apk"
       - uses: actions/upload-artifact@v4
         with:
           name: dina-app-release-apk
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+          retention-days: 30
 
   flutter-windows:
     name: Flutter Windows build
-    # Pinned to windows-2022 rather than windows-latest. windows-latest now
-    # resolves to a Windows Server 2025 image that ships Visual Studio 2026
-    # (18.x) only. Flutter 3.24.5 maps only VS major 17 to a CMake generator and
-    # falls back to "Visual Studio 16 2019" for everything else, so on that image
-    # the build dies with:
-    #   CMake Error at CMakeLists.txt:3 (project)
-    #     Generator: Visual Studio 16 2019
-    #     could not find any instance of Visual Studio.
-    # Flutter only learned to detect VS 2026 in 3.39. windows-2022 ships
-    # VS 2022 (major 17), which this Flutter version handles natively.
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -186,14 +123,11 @@ jobs:
           channel: stable
           cache: true
           pub-cache: true
-      # Prints the toolchain the build is about to use, so a future toolchain
-      # change on the runner image is diagnosable from the log directly.
       - name: Report detected Visual Studio installations
         shell: pwsh
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           & $vswhere -format json -products * -all -utf8
-      # Same rationale as the Linux job: scaffolding only, no source rewriting.
       - name: Generate Windows platform files
         working-directory: app
         run: flutter create . --platforms=windows --project-name dina_app
@@ -203,18 +137,26 @@ jobs:
       - name: Build Windows
         working-directory: app
         run: flutter build windows --release
-      - name: Verify Windows artifact exists
+      - name: Package Windows application
+        shell: pwsh
         working-directory: app
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = 'build/windows/x64/runner/Release/dina_app.exe'
+          $releaseDir = 'build/windows/x64/runner/Release'
+          $exe = Join-Path $releaseDir 'dina_app.exe'
           if (-not (Test-Path $exe)) {
-            Write-Error "Expected Windows binary was not produced at $exe"
-            exit 1
+            throw "Expected Windows executable was not produced at $exe"
           }
-          Get-Item $exe | Format-List Name, Length
+          $zip = 'build/windows/dina-windows-x64.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zip -CompressionLevel Optimal
+          if (-not (Test-Path $zip)) {
+            throw "Windows ZIP package was not produced at $zip"
+          }
+          Get-Item $exe, $zip | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with:
-          name: dina-app-windows-release
-          path: app/build/windows/x64/runner/Release/
+          name: dina-app-windows-x64
+          path: app/build/windows/dina-windows-x64.zip
           if-no-files-found: error
+          retention-days: 30
