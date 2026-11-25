@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from urllib.parse import quote
 from functools import lru_cache
 
 from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
@@ -110,12 +111,23 @@ def get_settings() -> Settings:
     if _cloudflare_env is None:
         return Settings()
 
-    # Prefer Hyperdrive's pooled PostgreSQL connection string. A plain
-    # DATABASE_URL secret is also accepted for diagnostic deployments.
+    # Hyperdrive's Python binding exposes host/user/password/database fields.
+    # A DATABASE_URL secret remains useful for diagnostics and local preview.
     database_url = getattr(_cloudflare_env, "DATABASE_URL", "")
     if not database_url:
         hyperdrive = getattr(_cloudflare_env, "HYPERDRIVE", None)
-        database_url = getattr(hyperdrive, "connection_string", "")
+        if hyperdrive is not None:
+            host = getattr(hyperdrive, "host", "")
+            port = getattr(hyperdrive, "port", "")
+            user = getattr(hyperdrive, "user", "")
+            password = getattr(hyperdrive, "password", "")
+            database = getattr(hyperdrive, "database", "")
+            if all((host, port, user, database)):
+                database_url = (
+                    f"postgresql://{quote(str(user), safe='')}:"
+                    f"{quote(str(password), safe='')}@{host}:{port}/"
+                    f"{quote(str(database), safe='')}?sslmode=disable"
+                )
 
     if not database_url:
         raise ConfigurationError(
